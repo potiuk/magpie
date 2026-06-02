@@ -22,7 +22,7 @@ Order the areas for display by total-count descending, with `(no area)` always l
 
 ## Counters (per area)
 
-One `_AreaStats` block per area. Only two counters (`total` and `contributors`) cover all PRs; every other counter is **contributor-only** (excludes `OWNER` / `MEMBER` / `COLLABORATOR` authors). The rationale is that collaborator PRs have a different lifecycle — they're not triaged by the pr-management-triage skill, they don't need "ready for maintainer review" to surface, and their drafts are the author's to manage. Mixing them into the draft / triaged / responded counts dilutes every percentage on the row.
+One `_AreaStats` block per area. Only two counters (`total` and `contributors`) cover all PRs; every other counter is **contributor-only** (excludes `OWNER` / `MEMBER` / `COLLABORATOR` authors). The rationale is that maintainer PRs have a different lifecycle — they're not triaged by the pr-management-triage skill, they don't need "ready for maintainer review" to surface, and their drafts are the author's to manage. Mixing them into the draft / triaged / responded counts dilutes every percentage on the row.
 
 | Field | Count rule | Scope |
 |---|---|---|
@@ -55,7 +55,7 @@ the label itself is evidence that the PR cleared the triage bar.
 ### Invariants
 
 - `total == total_drafts + total_non_drafts` (every PR is exactly one)
-- `contributors + collaborator_authored + bot_authored == total` (three disjoint author classes)
+- `contributors + maintainer_authored + bot_authored == total` (three disjoint author classes)
 - `contributors == drafts + non_drafts` (each contributor PR is one or the other)
 - `triaged_waiting + triaged_responded <= contributors`
 - `triaged_waiting + triaged_responded <= engaged` (Quality-Criteria-triaged is a subset of engaged)
@@ -135,7 +135,7 @@ For each contributor PR in an area, add the matching weight (first-match-wins, t
 | untriaged non-draft AND 7–28 days | **3** | author still likely active; needs triage soon |
 | untriaged non-draft AND < 7 days | **1** | recent — give the next sweep a chance |
 
-Collaborator-authored PRs (`OWNER`/`MEMBER`/`COLLABORATOR`) score **0** regardless of state — they have a different lifecycle (see [`#counters-per-area`](#counters-per-area)).
+Maintainer-authored PRs (`OWNER`/`MEMBER`/`COLLABORATOR`) score **0** regardless of state — they have a different lifecycle (see [`#counters-per-area`](#counters-per-area)).
 
 Sort areas by score descending. The dashboard renders the top 8 areas; areas with fewer than 3 contributor PRs are filtered as noise (a tiny area with one stale PR shouldn't dominate the ranking).
 
@@ -217,7 +217,7 @@ Net alone hides activity. A week with 100 opened and 100 closed has the same net
 
 ## Ready-for-review trend by top areas
 
-The dashboard's "Ready-for-review trend" panel shows the cumulative count of currently-`ready for maintainer review` PRs over the last 6 weeks, broken down by the top-N highest-pressure areas (default N = 5; areas with fewer than 3 currently-ready PRs are excluded as noise).
+The dashboard's "Ready-for-review trend" panel shows the running total count of currently-`ready for maintainer review` PRs over the last 6 weeks, broken down by the top-N highest-pressure areas (default N = 5; areas with fewer than 3 currently-ready PRs are excluded as noise).
 
 For each PR currently carrying the label, the **labeled-at timestamp** is the `createdAt` of the most recent `LabeledEvent` where `label.name == "ready for maintainer review"` from the PR's timeline (see [`fetch.md#ready-label-timeline`](fetch.md#ready-label-timeline)).
 
@@ -227,7 +227,7 @@ For each top area `a` and each weekly bucket `w` in `0..5`:
 ready_count[a][w] = count of currently-ready PRs in area a where labeled_at <= w.end
 ```
 
-This is a **cumulative** count, not a per-week delta — by construction it's monotonically non-decreasing because PRs that lose the label drop out of the *currently-ready* set entirely (they're not in this dataset).
+This is a **running total** count, not a per-week delta — by construction it's monotonically non-decreasing because PRs that lose the label drop out of the *currently-ready* set entirely (they're not in this dataset).
 
 Render the result as a multi-line chart, one line per area, with the area's pressure-band colour from [`#pressure-score`](#pressure-score) (red / amber / grey lines). Each line ends at the current count visible in the dashboard's hero card.
 
@@ -241,9 +241,9 @@ task-sdk: 40 ready (+5 in last 7d)
 
 The "+N in last 7d" is the count of PRs labeled within the last week — surfaces whether the queue is growing faster than it can be reviewed.
 
-### Why cumulative, not weekly-delta
+### Why running total, not weekly-delta
 
-A maintainer looking at the trend wants to see "how is the review backlog evolving" — a steadily-growing line means review velocity isn't keeping up with triage promotion. Per-week deltas would show only the additions and obscure that the queue keeps *being* big. The cumulative view answers the actual question.
+A maintainer looking at the trend wants to see "how is the review backlog evolving" — a steadily-growing line means review velocity isn't keeping up with triage promotion. Per-week deltas would show only the additions and obscure that the queue keeps *being* big. The running total view answers the actual question.
 
 ---
 
@@ -365,26 +365,41 @@ zero engagement in the window are excluded from the panel.
 
 ## Backlog over time (per-week snapshots)
 
-The dashboard's "Open backlog over time" panel shows how the total open-PR count
-moved at the end of each of the last 6 weeks.
+The dashboard's "Open backlog over time" panel shows how the open-PR backlog
+moved at the end of each of the last 6 weeks, rendered as a **stacked**
+horizontal bar per week split four ways: draft vs non-draft, each split by
+contributor vs maintainer author class.
 
-For each weekly bucket `w` in `0..5`, count PRs that were *open at end-of-week-`w`*:
+For each weekly bucket `w` in `0..5`, take the non-bot PRs that were *open at
+end-of-week-`w`*:
 
 ```text
-open_count[w] = count of non-bot PRs P where:
-                  P.createdAt <= w.end
-                  AND (P is currently open
-                       OR (P is closed AND P.closedAt > w.end))
+open_at_end(P, w) := P.createdAt <= w.end
+                     AND (P is currently open
+                          OR (P is closed AND P.closedAt > w.end))
 ```
 
-PRs closed *before* the cutoff are absent from both datasets, so for `w` near the
-cutoff edge the snapshot is a slight under-count. Note the caveat in the
-dashboard.
+and bucket each such PR into exactly one of four segments:
 
-Below the chart, print:
+| Segment | Definition | Colour |
+|---|---|---|
+| `nondraft_contrib` | `NOT isDraft` AND `authorAssociation NOT IN (OWNER, MEMBER, COLLABORATOR)` | blue |
+| `nondraft_maintainer` | `NOT isDraft` AND `authorAssociation IN (OWNER, MEMBER, COLLABORATOR)` | magenta |
+| `draft_contrib` | `isDraft` AND contributor | cyan |
+| `draft_maintainer` | `isDraft` AND maintainer | grey |
+
+The four segments sum to the total open count for that week.
+
+**Approximation caveat:** author class is the PR's immutable `authorAssociation`,
+but draft state uses the PR's *current* `isDraft` as a proxy for its state at
+end-of-week (historical draft state is not available). Combined with the
+PRs-closed-before-cutoff gap, the split near the cutoff edge is approximate.
+Note the caveat in the dashboard.
+
+Below the chart (and its colour-key legend), print:
 
 ```text
-6-week trend: <delta> open PRs (start: <open_count[0]>, end: <open_count[5]>)
+6-week trend: <delta> open PRs (start: <total[0]>, end: <total[5]>)
 ```
 
 Colour the delta red when growth is >10, green when shrinkage is >10, grey
@@ -402,7 +417,7 @@ author's GitHub association:
 |---|---|
 | `first_time` | `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER` |
 | `contributor` | `CONTRIBUTOR`, `NONE`, anything else not below |
-| `collab` (maintainer) | `OWNER`, `MEMBER`, `COLLABORATOR` |
+| `maintainer` | `OWNER`, `MEMBER`, `COLLABORATOR` |
 
 Bot-authored PRs are excluded
 (per [`classify.md#is_bot`](classify.md#is_bot--author-is-a-recognised-bot)).
@@ -468,9 +483,9 @@ fetch, so older weeks under-count.
 
 ---
 
-## Ready-for-review queue size (cumulative over time)
+## Ready-for-review queue size (running total over time)
 
-A second view on the ready queue — the **total** queue size cumulatively at end
+A second view on the ready queue — the **total** queue size as a running total at end
 of each week, single line for all areas combined. (The per-area version is the
 chart from [`#ready-for-review-trend-by-top-areas`](#ready-for-review-trend-by-top-areas).)
 

@@ -3,7 +3,7 @@
 
 # Render
 
-The skill produces a **maintainer dashboard** as the primary output: an HTML page with five colour-coded sections at the top, a time-trend line chart, and the full per-area tables collapsed underneath. The dashboard is designed to answer "what should I do today" at a glance, with the underlying numbers one click away.
+The skill produces a **maintainer dashboard** as the primary output: an HTML page whose top region pairs the colour-coded hero cards (left) with a status box (health rating + what-needs-attention, right), followed by trend charts, a contributor-vs-maintainer author-class split for the ready-for-review content, and the full per-area tables collapsed underneath. Every chart carries its own colour-key legend rendered directly below it. The dashboard is designed to answer "what should I do today" at a glance, with the underlying numbers one click away.
 
 A Rich-rendered terminal-tables variant and a Markdown fallback are produced when the maintainer asks for them (`tables-only` or `markdown` flag, or output is being piped to a non-tty). Those modes render only the per-area tables — they skip the hero cards, recommendation panel, charts, and pressure ranking, since those rely on visual layout that doesn't translate to a terminal.
 
@@ -33,77 +33,95 @@ Tuesday, May 6, 2026 · 14:33 UTC · viewer @potiuk · 6-week window since 2026-
 
 The title is plain text. Context line includes `<weekday>, <month> <day>, <year> · <HH:MM> UTC · viewer @<login> · 6-week window since <cutoff>`. Use the fetch-start `<now>`, not render-end, so a slow run remains a single-moment snapshot.
 
-### 2. Hero cards — two-row grid
+### 2. Top region — hero cards (left) + status box (right)
 
-Two rows of four cards each:
+The top region is a two-column grid: the **hero cards** on the left (heading
+**Backlog state**) and the **status box** on the right (section 3 below). On
+narrow screens the status box drops below the hero cards.
 
-#### Row 1 — backlog state
+The hero block is **two rows of four cards**. Row 1 counts **all** open PRs;
+row 2 counts the **non-draft** subset of the same four metrics. The
+ready-for-review cards are scoped to **contributor** PRs — the queue that flows
+through triage — because maintainer-authored PRs bypass triage and are surfaced
+in their own "Maintainers" section (section 9b).
 
-| Card | Big number | Sub-label | Colour rule |
-|---|---|---|---|
-| **Repo Health** | the rating label (`✅ Healthy` / `⚠️ Needs attention` / `🔥 Action needed`) | "based on triage backlog + queue size" | green / amber / red, per [`aggregate.md#health-rating`](aggregate.md#health-rating) |
-| **Open PRs (non-bot)** | `total_contributors + total_collaborators` | `<total_non_drafts> non-draft · <total_drafts> draft` (line 1)<br>`<contrib_count> contributor · <collab_count> collaborator-authored` (line 2) | blue (informational) |
-| **Ready for review** | `len(ready_open)` | `<pct>% of contributor queue` | green |
-| **Untriaged non-drafts** | `len(untriaged_nondraft)` (uses [`is_untriaged`](classify.md#is_untriaged--broad-untriaged)) | `<X> are >4 weeks old` | red if >0 are >4w, amber if total > 30, green otherwise |
-
-#### Row 2 — triage coverage breakdown
-
-This row exposes the **gap between the literal Quality-Criteria marker and
-broad maintainer engagement** so a maintainer can see at a glance how much
-triage is happening that the marker-based count misses.
+#### Row 1 — all open PRs
 
 | Card | Big number | Sub-label | Colour rule |
 |---|---|---|---|
-| **Quality Criteria triaged** | `triaged_waiting + triaged_responded` (literal `Pull Request quality criteria` link present in a maintainer comment) | `<pct>% of contributor non-drafts` | blue (informational) |
-| **De-facto triaged** | [`defacto_triaged`](classify.md#is_engaged--de-facto-triaged) (engaged by a maintainer, no Quality-Criteria marker) | `<pct>% of contributor non-drafts` | amber (gap signal — the bigger this is vs the Quality-Criteria card, the more triage is happening invisibly to the marker counter) |
-| **AI-triaged** | [`ai_triaged`](classify.md#is_ai_triaged--ai-assisted-triage) (received an AI-assisted triage comment) | `<pct>% of Quality-Criteria-triaged` | grey (informational) |
-| **Bot PRs** | [`bot_authored`](classify.md#is_bot--author-is-a-recognised-bot) | `<dependabot> dependabot · <other> other` | grey (separate lifecycle, surfaced for accounting parity) |
+| **All open PRs** | `total` (non-bot) | `<non_drafts> non-draft · <drafts> draft` (line 1)<br>`<contributors> contributor · <maintainers> maintainer-authored` (line 2) | cyan (informational) |
+| **Contributor PRs** | `contributors` | `<pct>% of all open PRs` | cyan |
+| **Ready to review from contributors** | `ready_contributors` (PRs with `ready for maintainer review`, contributor-authored) | `<pct>% of contributor PRs` | green |
+| **Ready to review for more than 4 weeks** | `ready_contributors` aged `>4w` | "ready &gt;4 weeks — review overdue" | red if > 0, else green |
 
-The **De-facto triaged** card is the key new signal: on a large `<upstream>`
-queue (~457 human-authored open PRs) the Quality-Criteria count typically
-captures ~21% of PRs but the broad `is_engaged` count captures ~59% — the
-gap (~38 percentage points) is PRs that maintainers engaged with through
-review threads, direct comments, or label-adds without leaving the templated
-`Pull Request quality criteria` marker. Surfacing the gap lets the maintainer
-team see how much queue health the marker-based counter under-states.
+#### Row 2 — non-draft subset
 
-The **Bot PRs** card is a separate accounting category — bot-authored PRs
-follow their own automated lifecycle and don't merge into the
-`contributors` / `collaborators` split. Their count is informational; the
-"Untriaged" hero card never includes them (bots are excluded via
-[`is_untriaged`](classify.md#is_untriaged--broad-untriaged)).
+Same four metrics, restricted to non-draft PRs:
 
-The **Open PRs** card's sub-label is a two-line breakdown: the first line splits
-the total by draft state, the second line splits by author class (contributor
-vs. collaborator). Both splits sum to the same total (modulo bot exclusion at
-fetch time).
-
-The **Untriaged non-drafts** card uses the refined `is_untriaged` predicate from
-[`classify.md`](classify.md#is_untriaged--broad-untriaged) — bots, collaborator-
-authored PRs, and PRs already carrying `ready for maintainer review` are NOT
-counted here.
-
-Card layout is responsive: 4-column on wide screens (8 cards total in two rows),
-2-column on narrow, 1-column on mobile-width. The big number uses 32px font;
-sub-labels are 12px dim grey.
-
-### 3. What needs attention (action panel)
-
-A vertical list of action cards built from the recommendation rules in [`#recommendation-rules`](#recommendation-rules) below. Each card has a coloured left border (red = high, amber = medium, grey = low), an icon, a one-line title, a 1–2-line detail explanation, and (when applicable) a monospace `code` block holding the exact slash-command the maintainer can paste. When a rule's `action` is `—` (no paste-clean command applies), the card omits the code block and shows title + detail only.
-
-If zero rules fire, render a single low-priority card with a `✨` icon and the body "No urgent actions detected. Queue is in healthy shape — periodic /pr-management-triage when convenient." Never leave the section visually empty.
-
-The order inside the panel is: high-priority first (sorted by count descending), then medium (same), then low. Within a tier the rule firing order from [`#recommendation-rules`](#recommendation-rules) breaks ties.
-
-### 3b. Trends over time (line charts, 5 sub-panels)
-
-A "Trends over time" section between "What needs attention" and "Closure velocity" with 5 sub-panels, each rendered as an inline SVG line chart followed by a precise per-week table for readers who want exact numbers. Charts use the same 6-week window the rest of the dashboard uses.
-
-| Sub-panel | Data source | Line(s) | Caveat |
+| Card | Big number | Sub-label | Colour rule |
 |---|---|---|---|
-| **Open backlog over time** | [`aggregate.md#backlog-over-time-per-week-snapshots`](aggregate.md#backlog-over-time-per-week-snapshots) | single line (open count at end of each week) | — |
-| **PRs opened by author class** | [`aggregate.md#prs-opened-by-author-class-per-week`](aggregate.md#prs-opened-by-author-class-per-week) | 3 lines: FIRST_TIME, CONTRIBUTOR, MAINTAINER | — |
-| **Ready-for-review queue size** | [`aggregate.md#ready-for-review-queue-size-cumulative-over-time`](aggregate.md#ready-for-review-queue-size-cumulative-over-time) | single line, cumulative end-of-week | — |
+| **All open PRs (non-draft)** | `non_drafts` | `<pct>% of all open PRs` | cyan |
+| **Contributor PRs (non-draft)** | `contributor_nondrafts` | `<pct>% of non-draft PRs` | cyan |
+| **Ready to review from contributors (non-draft)** | `ready_contributors` non-draft | `<pct>% of contributor non-drafts` | green |
+| **Ready to review for more than 4 weeks (non-draft)** | `ready_contributors` non-draft aged `>4w` | "ready &gt;4 weeks — review overdue" | red if > 0, else green |
+
+Each card shows a bold **card-label** under the big number naming the metric, so
+the eight cards are self-describing without the legend.
+
+Card layout is responsive: 4-column on wide screens, 2-column inside the
+two-column top region, 1-column on mobile-width. The big number uses 28px font;
+the card-label is 12px bold; sub-labels are 12px dim grey.
+
+> **Removed:** the former "triage coverage breakdown" row (Quality-Criteria /
+> de-facto / AI-triaged / Bot cards) is no longer rendered. The underlying
+> counters are still computed (the funnel and summary use them); they are just
+> not surfaced as hero cards.
+
+### 3. Status box — health + what needs attention (top-right)
+
+The status box sits in the **right column of the top region**, at the very top
+of the dashboard. It contains, in order:
+
+1. **Health rating** — a bordered banner with the rating label
+   (`✅ Healthy` / `⚠️ Needs attention` / `🔥 Action needed`), coloured
+   green / amber / red per [`aggregate.md#health-rating`](aggregate.md#health-rating),
+   and the sub-line "based on triage backlog + queue size".
+2. **What needs attention** — a vertical list of action cards built from the
+   recommendation rules in [`#recommendation-rules`](#recommendation-rules)
+   below. Each card has a coloured left border (red = high, amber = medium,
+   grey = low), an icon, a one-line title, a 1–2-line detail explanation, and
+   (when applicable) a monospace `code` block holding the exact slash-command
+   the maintainer can paste. When a rule's `action` is `—` (no paste-clean
+   command applies), the card omits the code block and shows title + detail only.
+
+If zero rules fire, render a single low-priority card with a `✨` icon and the
+body "No urgent actions detected. Queue is in healthy shape — periodic
+/pr-management-triage when convenient." Never leave the section visually empty.
+
+The order inside the panel is: high-priority first (sorted by count descending),
+then medium (same), then low. Within a tier the rule firing order from
+[`#recommendation-rules`](#recommendation-rules) breaks ties.
+
+### Per-chart legend rule
+
+**Every chart on the dashboard carries its own colour-key legend rendered
+immediately *below* the chart** (a horizontal row of `swatch + label` items),
+in addition to any in-margin series key. This is a hard rule: a reader must be
+able to decode a chart's colours without scrolling to the bottom-of-page
+legend. The bottom legend remains as the verbose methodology reference.
+
+### 3b. Trends over time (charts, 5 sub-panels)
+
+A "Trends over time" section between the top region and "Closure velocity" with
+5 sub-panels. Each chart is followed by its own legend (per the rule above) and,
+where useful, a precise per-week table. Charts use the same 6-week window the
+rest of the dashboard uses.
+
+| Sub-panel | Data source | Chart | Caveat |
+|---|---|---|---|
+| **Open backlog over time** | [`aggregate.md#backlog-over-time-per-week-snapshots`](aggregate.md#backlog-over-time-per-week-snapshots) | **stacked** horizontal bars per week, four segments: non-draft·contributors, non-draft·maintainers, draft·contributors, draft·maintainers | end-of-week split uses current draft state as a proxy |
+| **PRs opened by author class** | [`aggregate.md#prs-opened-by-author-class-per-week`](aggregate.md#prs-opened-by-author-class-per-week) | 3 lines: first-time, contributor, maintainer | — |
+| **Ready-for-review queue size** | [`aggregate.md#ready-for-review-queue-size-running-total-over-time`](aggregate.md#ready-for-review-queue-size-running-total-over-time) | single line, running total end-of-week (ready for review **by contributors**) | — |
 | **Triage velocity** | [`aggregate.md#triage-velocity-per-week`](aggregate.md#triage-velocity-per-week) | 2 lines: AI-drafted, manual QC | `comments(last:25)` cap under-counts older weeks; note in panel |
 | **Triage coverage rate by week opened** | [`aggregate.md#triage-coverage-rate-by-week-opened`](aggregate.md#triage-coverage-rate-by-week-opened) | single line (% engaged), y-axis 0-100 | same comment-cap caveat |
 
@@ -154,11 +172,30 @@ The two-line mini-summary translates the chart into the maintainer-relevant ques
 
 The line chart is kept inline-SVG (no JavaScript) so it renders in any browser, in a Slack image preview, or in any embedded HTML viewer. Keep the chart 720×220px so it's readable but doesn't dominate the page.
 
+### Author-class split — two sections
+
+Where the dashboard reports **ready-for-review** content it is divided into two
+top-level sections, each introduced by a full-width `<h1 class="section">`
+divider:
+
+1. **Ready for review from contributors** — everything about the contributor
+   queue that flows through triage into review: the Ready-for-review trend
+   (section 6), the Ready-for-review queue by CODEOWNER (section 8b), and the
+   Triage funnel (section 9). The divider sub-line reads "Contributor PRs that
+   cleared triage and await maintainer review."
+2. **Maintainers** (section 9aa below) — maintainer-authored PRs, which bypass
+   the contributor triage funnel.
+
+This split is deliberate: contributor PRs and maintainer-authored PRs have
+different lifecycles, and "ready for review" means different things for each
+(triage-cleared vs. straight-to-review). Keeping them in separate sections
+stops the contributor review queue from being diluted by maintainer self-merges.
+
 ### 6. Ready-for-review trend (multi-line chart)
 
-Title: **Ready-for-review trend (last 6 weeks, top areas)**
+Title: **Ready-for-review trend by top areas (contributor PRs)**
 
-An inline SVG line chart with one line per top-pressure area (default: top 5, filtered to areas with ≥ 3 currently-ready PRs). Each line is **cumulative**: at week W it shows the count of PRs that *currently* carry the `ready for maintainer review` label and were labelled on or before W.
+An inline SVG line chart with one line per top-pressure area (default: top 5, filtered to areas with ≥ 3 currently-ready PRs). Each line is **running total**: at week W it shows the count of PRs that *currently* carry the `ready for maintainer review` label and were labelled on or before W.
 
 Each area's line uses its pressure-band colour (red, amber, or grey per [`aggregate.md#pressure-score`](aggregate.md#pressure-score)). Same SVG dimensions as the opened-vs-closed chart (720×220px). The chart legend in the top-left lists each area name with its line colour swatch.
 
@@ -257,6 +294,20 @@ The two waiting cards are mutually exclusive — a PR with both unresponded AI-d
 ```
 
 This grid completes the dashboard's status section: hero cards at the top (queue size + red flags), recommendations next (what to do), trends + velocity + opened-vs-closed (momentum), pressure by area (where), CODEOWNERS distribution (who), and triage funnel (process health).
+
+### 9aa. Maintainers section
+
+Introduced by the **Maintainers** `<h1 class="section">` divider (sub-line
+"Maintainer-authored PRs, which bypass the contributor triage funnel"). Renders
+a single panel with the maintainer-authored open-PR count as the big number, a
+card-label "Maintainer-authored open PRs", and a sub-line:
+`<ready_maintainer> marked ready for review. Maintainer-authored PRs are not
+triaged through the contributor quality-criteria funnel — they go straight to
+review.`
+
+`ready_maintainer` counts PRs carrying the `ready for maintainer review` label
+whose author is `OWNER`/`MEMBER`/`COLLABORATOR`. This is the maintainer-side
+counterpart of the contributor "Ready to review" hero cards.
 
 ### 9b. Triager activity panel
 
@@ -438,7 +489,7 @@ Lives inside the second collapsed `<details>` block. Title: `Triaged PRs — Sti
 
 One row per area where `total > 0`, sorted by `total` descending. `(no area)` last. Append a bold **TOTAL** row.
 
-`Total` is a **reference-only** column — it counts every open PR in the area (collaborator + contributor alike). Every other numeric column is **contributor-only** (see [`aggregate.md#counters-per-area`](aggregate.md#counters-per-area)). This keeps draft-rate, triage-rate, and response-rate percentages meaningful: collaborator PRs bypass the triage funnel, so including them in the denominators would systematically understate how much of the contributor queue is ready, drafted, responded, etc.
+`Total` is a **reference-only** column — it counts every open PR in the area (maintainer + contributor alike). Every other numeric column is **contributor-only** (see [`aggregate.md#counters-per-area`](aggregate.md#counters-per-area)). This keeps draft-rate, triage-rate, and response-rate percentages meaningful: maintainer PRs bypass the triage funnel, so including them in the denominators would systematically understate how much of the contributor queue is ready, drafted, responded, etc.
 
 | Column | Source | Denominator | Colour |
 |---|---|---|---|
@@ -505,7 +556,7 @@ Render at the bottom of the dashboard inside a bordered panel. The legend explai
 
 <dt>Ready-for-review trend (multi-line chart)</dt>
 <dd>
-  Cumulative count of currently-`ready for maintainer review` PRs by week, one line per top-pressure area. Each line uses its area's pressure-band colour (<span style="color:#f85149">red</span> ≥ 30, <span style="color:#d29922">amber</span> 15–29, <span style="color:#6e7681">grey</span> &lt; 15). A steeply climbing line means review velocity isn't keeping up with triage promotion in that area. The "+N in last 7d" lines below the chart show recent growth pace per area.
+  Running-total count of currently-`ready for maintainer review` PRs by week, one line per top-pressure area. Each line uses its area's pressure-band colour (<span style="color:#f85149">red</span> ≥ 30, <span style="color:#d29922">amber</span> 15–29, <span style="color:#6e7681">grey</span> &lt; 15). A steeply climbing line means review velocity isn't keeping up with triage promotion in that area. The "+N in last 7d" lines below the chart show recent growth pace per area.
 </dd>
 
 <dt>Closed by triage reason (stacked bars)</dt>
@@ -533,7 +584,7 @@ Render at the bottom of the dashboard inside a bordered panel. The legend explai
 
 <dt>Detailed-table columns</dt>
 <dd>
-  <span style="color:#76e3ea"><strong>Contrib.</strong></span> — non-collaborator-authored PRs (denominator for nearly every contributor-scoped metric).
+  <span style="color:#76e3ea"><strong>Contrib.</strong></span> — contributor-authored PRs (denominator for nearly every contributor-scoped metric).
   <span style="color:#d29922"><strong>Triaged</strong></span> — PRs where a maintainer comment contains <code>Pull Request quality criteria</code> after the last commit.
   <span style="color:#56d364"><strong>Responded</strong></span> — author commented or pushed after the triage comment.
   <span style="color:#56d364"><strong>Ready</strong></span> — PRs carrying the <code>ready for maintainer review</code> label.

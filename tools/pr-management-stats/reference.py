@@ -76,7 +76,7 @@ DEFAULT_TRIAGE_MARKER = "Pull Request quality criteria"
 DEFAULT_AI_FOOTER = "AI-assisted triage tool"
 DEFAULT_READY_LABEL = "ready for maintainer review"
 DEFAULT_AREA_PREFIX = "area:"
-COLLAB_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 BOT_LOGINS = {"github-actions", "dependabot", "renovate", "copilot-pull-request-reviewer"}
 
 # stderr markers that indicate a transient (retryable) gh/GraphQL failure.
@@ -304,8 +304,8 @@ def classify(pr, ctx, *, partial=False):
     assoc = pr.get("authorAssociation", "?")
     pr["_author"] = author
     pr["_assoc"] = assoc
-    pr["_is_collab"] = assoc in COLLAB_ASSOCIATIONS
-    pr["_is_contrib"] = (not pr["_is_collab"]) and (not is_bot(author))
+    pr["_is_maintainer"] = assoc in MAINTAINER_ASSOCIATIONS
+    pr["_is_contrib"] = (not pr["_is_maintainer"]) and (not is_bot(author))
     labels = [l["name"] for l in pr["labels"]["nodes"]]
     pr["_labels"] = labels
     pr["_areas"] = [l for l in labels if l.startswith(ctx["area_prefix"])]
@@ -314,16 +314,16 @@ def classify(pr, ctx, *, partial=False):
 
     # Engagement signals — per classify.md is_engaged predicate
     has_collab_comment = any(
-        c.get("authorAssociation") in COLLAB_ASSOCIATIONS
+        c.get("authorAssociation") in MAINTAINER_ASSOCIATIONS
         and not is_bot(c["author"]["login"] if c["author"] else None)
         for c in pr["comments"]["nodes"]
     )
     has_qc_marker = any(
-        c.get("authorAssociation") in COLLAB_ASSOCIATIONS and ctx["triage_marker"] in c.get("body", "")
+        c.get("authorAssociation") in MAINTAINER_ASSOCIATIONS and ctx["triage_marker"] in c.get("body", "")
         for c in pr["comments"]["nodes"]
     )
     has_ai_footer = any(
-        c.get("authorAssociation") in COLLAB_ASSOCIATIONS and ctx["ai_footer"] in c.get("body", "")
+        c.get("authorAssociation") in MAINTAINER_ASSOCIATIONS and ctx["ai_footer"] in c.get("body", "")
         for c in pr["comments"]["nodes"]
     )
     has_review = any(
@@ -334,7 +334,7 @@ def classify(pr, ctx, *, partial=False):
     has_review_thread_collab = False
     for thread in (pr.get("reviewThreads", {}).get("nodes") or []):
         for c in (thread.get("comments", {}).get("nodes") or []):
-            if c.get("authorAssociation") in COLLAB_ASSOCIATIONS \
+            if c.get("authorAssociation") in MAINTAINER_ASSOCIATIONS \
                     and not is_bot(c["author"]["login"] if c["author"] else None):
                 has_review_thread_collab = True
                 break
@@ -374,7 +374,7 @@ def classify(pr, ctx, *, partial=False):
     triage_at = None
     if has_qc_marker:
         for c in pr["comments"]["nodes"]:
-            if c.get("authorAssociation") in COLLAB_ASSOCIATIONS and ctx["triage_marker"] in c.get("body", ""):
+            if c.get("authorAssociation") in MAINTAINER_ASSOCIATIONS and ctx["triage_marker"] in c.get("body", ""):
                 at = parse_iso(c["createdAt"])
                 if triage_at is None or at > triage_at:
                     triage_at = at
@@ -418,7 +418,7 @@ def compute_weekly_velocity(closed_prs, weeks, triage_marker):
             has_triage = False
             t_at = None
             for c in pr["comments"]["nodes"]:
-                if c.get("authorAssociation") in COLLAB_ASSOCIATIONS and triage_marker in c.get("body", ""):
+                if c.get("authorAssociation") in MAINTAINER_ASSOCIATIONS and triage_marker in c.get("body", ""):
                     has_triage = True
                     t_at = parse_iso(c["createdAt"])
                     break

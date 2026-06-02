@@ -140,11 +140,11 @@ The age uses the `last_author_interaction` defined in the
 
 | Tier | Predicate | Means | Dashboard card |
 |---|---|---|---|
-| Quality-Criteria-triaged | `is_triaged` | maintainer posted the literal `Pull Request quality criteria` link | **Quality Criteria triaged** (hero row 2, blue) |
-| De-facto triaged | `is_engaged AND NOT is_triaged` | maintainer engaged but no marker | **De-facto triaged** (hero row 2, amber — the gap signal) |
-| AI-triaged | `is_ai_triaged` | comment with the AI-attribution footer | **AI-triaged** (hero row 2, purple — accounting) |
+| Quality-Criteria-triaged | `is_triaged` | maintainer posted the literal `Pull Request quality criteria` link | computed; feeds the summary line and funnel (no longer a hero card) |
+| De-facto triaged | `is_engaged AND NOT is_triaged` | maintainer engaged but no marker | computed; the engagement gap signal (no longer a hero card) |
+| AI-triaged | `is_ai_triaged` | comment with the AI-attribution footer | computed; feeds the triager AI/manual split (no longer a hero card) |
 | Engaged (overall) | `is_engaged` | union of the above two | not a card on its own; equals `triaged + defacto_triaged` |
-| Untriaged | `is_untriaged` | NOT engaged + contributor + non-bot + not ready-labelled | **Untriaged non-drafts** (hero row 1) |
+| Untriaged | `is_untriaged` | NOT engaged + contributor + non-bot + not ready-labelled | feeds the contributor "Ready to review" framing and pressure score |
 
 The number of PRs in each tier sums to a clean partition of the contributor
 non-draft pool minus the ready-labelled set:
@@ -322,7 +322,7 @@ Four buckets is the deliberate minimum — each one maps to a distinct maintaine
 
 ---
 
-## Contributor vs collaborator
+## Contributor vs maintainer
 
 A PR is by a *contributor* (for the `Contrib.` column) when:
 
@@ -366,7 +366,7 @@ is_bot(login) :=
 ```
 
 Bot PRs are a **separate dashboard category** counted as `bot_authored` —
-they don't merge into `contributors` or `collaborators`, and they don't trip
+they don't merge into `contributors` or `maintainers`, and they don't trip
 the untriaged or engaged predicates. Their lifecycle is independent: they
 follow automated update / review cycles and are reviewed-and-merged by
 maintainers without going through the triage funnel. Surfacing them in their
@@ -401,7 +401,7 @@ Per-PR helper used by [`aggregate.md#pressure-score`](aggregate.md#pressure-scor
 ```text
 def pressure_weight(pr) -> int:
     if pr.author_association in ("OWNER", "MEMBER", "COLLABORATOR"):
-        return 0                       # collaborator PRs don't add maintainer pressure
+        return 0                       # maintainer-authored PRs add no maintainer pressure
     if pr.is_ready_for_review:
         return 1                       # waiting on maintainer review — soft pressure
     if pr.is_triaged_waiting and (now - pr.triage_ts) >= 7 days:

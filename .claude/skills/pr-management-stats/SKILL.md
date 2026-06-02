@@ -32,11 +32,11 @@ sections:
 
 | Section | What it shows | Maintainer use |
 |---|---|---|
-| **Hero cards** | Health rating, total open, ready-for-review count, untriaged-non-drafts (with >4w callout) | At-a-glance status |
-| **What needs attention** | Prioritised action recommendations (high/medium/low) with the exact slash command to run | Decide what to spend the next hour on |
+| **Hero cards** | Two rows (all PRs / non-draft) of: all open PRs, contributor PRs, ready-to-review from contributors, ready-to-review >4w | At-a-glance backlog state |
+| **Status box** (top-right) | Health rating + prioritised action recommendations (high/medium/low) with the exact slash command to run | Decide what to spend the next hour on |
 | **Closure velocity** | Per-week merged/closed bars over the last 6 weeks, plus avg/peak | Spot slowdowns or burst weeks |
 | **Pressure by area** | `area:*` ranking by weighted untriaged-old PR count | Pick a focused triage / review session |
-| **Triage funnel** | Triage coverage %, author response rate %, stalest bucket, this-week velocity | See whether the funnel is healthy end-to-end |
+| **Ready for review from contributors** / **Maintainers** | Author-class split of the ready-for-review content (contributor triage→ready funnel vs. maintainer-authored PRs) | Separate the contributor review queue from maintainer self-merges |
 
 The two original tables (**Triaged final-state since cutoff** and **Triaged still-open by area**) are kept as a *collapsible details section* at the bottom of the dashboard for maintainers who want the raw per-area numbers.
 
@@ -121,11 +121,11 @@ read-only and inherits everything from `pr-management-triage`'s contract.
 
 **Golden rule 1 — no mutations, ever.** This skill only reads. It must not post comments, add labels, close, rebase, or approve anything. If the maintainer asks for stats and also wants an action, decline the mutation and redirect to `pr-management-triage`.
 
-**Golden rule 2 — reuse pr-management-triage's triage-detection.** The "triaged" count and "responded" count depend on the same `Pull Request quality criteria` marker string and the same collaborator set (`OWNER`/`MEMBER`/`COLLABORATOR`) that drive the triage-marker rows in `pr-management-triage/classify-and-act.md` (rows 3–4 — `already_triaged`). Don't invent a second definition — both skills must agree on "is this PR triaged".
+**Golden rule 2 — reuse pr-management-triage's triage-detection.** The "triaged" count and "responded" count depend on the same `Pull Request quality criteria` marker string and the same maintainer set (`OWNER`/`MEMBER`/`COLLABORATOR`) that drive the triage-marker rows in `pr-management-triage/classify-and-act.md` (rows 3–4 — `already_triaged`). Don't invent a second definition — both skills must agree on "is this PR triaged".
 
 **Golden rule 3 — one GraphQL call per batch, not per PR.** Same rule as `pr-management-triage/fetch-and-batch.md`. One aliased query covers the open-PR list for a whole page; the closed/merged fetch is paginated by GitHub's search cursor. Never call `gh pr view` per PR.
 
-**Golden rule 4 — include a legend with every render.** The tables are dense (15+ columns on the still-open table). Always print a short legend after the tables explaining the columns — `Contrib.` = non-collaborator, `Responded` = author replied after the triage comment, `Drafted by triager` = PR converted to draft by the viewer, etc. Nobody remembers column abbreviations in isolation. The dashboard's hero cards and recommendation panel are themselves self-explanatory and don't need the legend; the legend is for the collapsed "Detailed tables" section.
+**Golden rule 4 — include a legend with every render.** The tables are dense (15+ columns on the still-open table). Always print a short legend after the tables explaining the columns — `Contrib.` = contributor, `Responded` = author replied after the triage comment, `Drafted by triager` = PR converted to draft by the viewer, etc. Nobody remembers column abbreviations in isolation. The dashboard's hero cards and recommendation panel are themselves self-explanatory and don't need the legend; the legend is for the collapsed "Detailed tables" section.
 
 **Golden rule 5 — state the input scope up front.** Before rendering, print one line summarising what the stats cover: repo name, total open PR count, closed-since cutoff date, and viewer login. The numbers only make sense in context.
 
@@ -176,7 +176,7 @@ Paginate until `pageInfo.hasNextPage == false`. Batch size of 50 is safe (the op
 
 For each open PR, determine:
 
-- `is_triaged_waiting` — viewer's (or any collaborator's) comment contains the `Pull Request quality criteria` marker, the comment post-dates the PR's last commit, AND the author has NOT commented after it.
+- `is_triaged_waiting` — viewer's (or any maintainer's) comment contains the `Pull Request quality criteria` marker, the comment post-dates the PR's last commit, AND the author has NOT commented after it.
 - `is_triaged_responded` — same marker found, but the author HAS commented after it.
 - `is_drafted_by_triager` — the PR was converted to draft by the viewer at or after the triage comment (from the `ConvertToDraftEvent` timeline, optional — see [`classify.md#drafted-by-triager`](classify.md#drafted-by-triager) for the cheaper heuristic).
 - `last_author_interaction_at` — most recent `commit.committedDate` OR author comment `createdAt`, whichever is later.
@@ -241,7 +241,7 @@ These per-week numbers feed the dashboard's "Opened vs closed momentum" line cha
 
 Needs one extra fetch (per [`fetch.md#ready-label-timeline`](fetch.md#ready-label-timeline)): for each currently-`ready for maintainer review` PR, the timestamp of its most recent `LabeledEvent` adding that label. Aliased GraphQL, ~30 PRs per call.
 
-Then for each top-pressure area (top 5 by Step 5f's score, filtered to areas with ≥ 3 currently-ready PRs), compute a 6-bucket cumulative count: `ready_count[a][w] = count of currently-ready PRs in area a where labeled_at <= w.end`.
+Then for each top-pressure area (top 5 by Step 5f's score, filtered to areas with ≥ 3 currently-ready PRs), compute a 6-bucket running total count: `ready_count[a][w] = count of currently-ready PRs in area a where labeled_at <= w.end`.
 
 Feeds the dashboard's "Ready-for-review trend" multi-line chart. See [`aggregate.md#ready-for-review-trend-by-top-areas`](aggregate.md#ready-for-review-trend-by-top-areas) for the exact spec and rendering rules.
 
@@ -284,7 +284,7 @@ For each of the same six weekly windows, compute (see [`aggregate.md`](aggregate
 - **PRs opened by author class** — partition the `opened` per-week count by `authorAssociation` (FIRST_TIME / CONTRIBUTOR / MAINTAINER).
 - **Triage velocity** — count of PRs whose *first* QC-marker comment fell in the window, split by AI-drafted vs manual.
 - **Triage coverage rate** — for PRs opened in the window, percentage where `is_engaged` is true.
-- **Ready-queue size cumulative** — count of currently-ready PRs whose `labeled_at` ≤ window.end (single line, all areas combined; the per-area version is from Step 5d).
+- **Ready-queue size running total** — count of currently-ready PRs whose `labeled_at` ≤ window.end (single line, all areas combined; the per-area version is from Step 5d).
 
 These five series feed the dashboard's "Trends over time" section (panel 3b).
 
@@ -315,16 +315,18 @@ Feeds the dashboard's "Ready-for-review queue by CODEOWNER" panel (8b). See [`ag
 Render the maintainer dashboard per the layout in [`render.md#dashboard-layout`](render.md#dashboard-layout):
 
 1. **Context line** — repo, open count, cutoff, viewer, timestamp.
-2. **Hero cards (4)** — health rating, total open, ready count, untriaged-non-draft count.
-3. **What needs attention** — recommendation list from Step 5a.
-3b. **Trends over time** — 5 inline-SVG line charts (open backlog, PRs opened by author class, ready-queue cumulative, triage velocity, triage coverage rate). Each chart sits above a precise per-week table.
-4. **Closure velocity** — weekly line chart + stacked-bar table from Step 5b.
+2. **Top region** — hero cards (left: two rows of 4 — all open PRs, contributor PRs, ready-to-review from contributors, ready-to-review >4w; row 2 the non-draft subset) + **status box** (right: health rating + the "what needs attention" recommendation list from Step 5a).
+3b. **Trends over time** — 5 charts (open backlog **stacked** four ways, PRs opened by author class, ready-queue running total, triage velocity, triage coverage rate). Each chart carries a colour-key legend directly below it.
+4. **Closure velocity** — weekly stacked-bar chart from Step 5b.
 5. **Opened vs closed momentum** — line chart from Step 5c.
-6. **Ready-for-review trend by top areas** — multi-line chart from Step 5d.
-7. **Closed by triage reason** — line chart + stacked-bar table from Step 5e.
+7. **Closed by triage reason** — stacked-bar chart from Step 5e.
 8. **Pressure by area** — top areas from Step 5f.
+   — **§ Ready for review from contributors** (author-class section divider) —
+6. **Ready-for-review trend by top areas** (contributor PRs) — multi-line chart from Step 5d.
 8b. **Ready-for-review queue by CODEOWNER** — per-owner Ready + Waiting-for-author table (skip if `.github/CODEOWNERS` absent). See [`aggregate.md#ready-for-review-queue-by-codeowner`](aggregate.md#ready-for-review-queue-by-codeowner).
 9. **Triage funnel** — 5-column hero grid: Ready / Responded / Waiting (AI-only) / Waiting (manual maintainer response) / Not yet triaged. The "Waiting" cards are mutually exclusive — see [`classify.md#waiting-sub-states--ai-only-vs-maintainer-response`](classify.md#waiting-sub-states--ai-only-vs-maintainer-response).
+   — **§ Maintainers** (author-class section divider) —
+9aa. **Maintainers** — maintainer-authored open-PR panel (count + ready-for-review subcount); these PRs bypass the contributor triage funnel.
 9b. **Triager activity** — per-maintainer per-week PR-engagement counts.
 10. **Detailed tables** (collapsed by default):
     1. **Triaged PRs — Final State since `<cutoff>`** — one row per area where `Triaged Total > 0`.

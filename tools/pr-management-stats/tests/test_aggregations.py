@@ -56,9 +56,15 @@ def test_compute_hero_counts():
     assert hero["drafts"] == 1
     assert hero["non_drafts"] == 4
     assert hero["contribs"] == 4
-    assert hero["collabs"] == 1
+    assert hero["maintainers"] == 1
     assert hero["contrib_nondraft_total"] == 3
     assert hero["ready"] == 1
+    # PR2 is the only ready PR: contributor, non-draft, recent (<4w), not maintainer-authored
+    assert hero["ready_contrib"] == 1
+    assert hero["ready_contrib_4w"] == 0
+    assert hero["ready_contrib_nondraft"] == 1
+    assert hero["ready_contrib_nondraft_4w"] == 0
+    assert hero["ready_maintainer"] == 0
     assert hero["untriaged"] == 1
     assert hero["untriaged_4w"] == 1
     assert hero["qc_triaged"] == 1

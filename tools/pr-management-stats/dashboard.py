@@ -58,7 +58,7 @@ from pathlib import Path
 # a Python package, so the tool is directory-portable rather than self-contained.
 from reference import (
     CLOSED_PRS_QUERY,
-    COLLAB_ASSOCIATIONS,
+    MAINTAINER_ASSOCIATIONS,
     DEFAULT_AI_FOOTER,
     DEFAULT_AREA_PREFIX,
     DEFAULT_READY_LABEL,
@@ -258,6 +258,17 @@ def svg_stacked_horizontal_bars(rows, *, width=720, height=None,
     return "".join(parts)
 
 
+def chart_legend(items):
+    """Render a small colour key BELOW a chart. ``items`` = list of (label, colour)."""
+    if not items:
+        return ""
+    swatches = "".join(
+        f'<span class="item"><span class="swatch" style="background:{c}"></span>{esc(label)}</span>'
+        for label, c in items
+    )
+    return f'<div class="chart-legend">{swatches}</div>'
+
+
 # ============================================================
 # CSS  (inline so dashboard.py + reference.py are independently carry-over-able)
 # ============================================================
@@ -286,7 +297,25 @@ h3 {{ font-size: 13px; margin: 12px 0 6px; color: {C_DIM}; font-weight: 600; }}
 .card {{ background: {C_PANEL}; border: 1px solid {C_BORDER}; border-radius: 6px;
          padding: 16px; }}
 .card .big {{ font-size: 28px; font-weight: 600; line-height: 1.1; }}
+.card .card-label {{ font-size: 12px; font-weight: 600; color: {C_FG}; margin-top: 4px; }}
 .card .sub {{ font-size: 12px; color: {C_DIM}; margin-top: 6px; line-height: 1.4; }}
+.top-region {{ display: grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: start; margin: 12px 0; }}
+.top-region .hero {{ grid-template-columns: repeat(2, 1fr); }}
+.status-box {{ background: {C_PANEL}; border: 1px solid {C_BORDER}; border-radius: 6px; padding: 12px 16px; }}
+.status-box h2 {{ margin-top: 0; }}
+.status-box .action {{ background: {C_BG}; }}
+.health {{ border-left: 4px solid {C_BORDER}; padding: 8px 12px; margin: 8px 0 4px;
+           background: {C_BG}; border-radius: 0 6px 6px 0; }}
+.health-rating {{ font-size: 18px; font-weight: 600; }}
+.panel .big {{ font-size: 28px; font-weight: 600; line-height: 1.1; }}
+.panel .card-label {{ font-size: 13px; font-weight: 600; color: {C_FG}; margin-top: 4px; }}
+h1.section {{ font-size: 19px; margin: 34px 0 2px; padding-bottom: 8px;
+              border-bottom: 2px solid {C_BORDER}; }}
+.section-sub {{ color: {C_DIM}; font-size: 12px; margin-bottom: 8px; }}
+.chart-legend {{ display: flex; flex-wrap: wrap; gap: 14px; margin: 4px 0 10px; font-size: 11px; color: {C_DIM}; }}
+.chart-legend .item {{ display: inline-flex; align-items: center; gap: 5px; }}
+.chart-legend .swatch {{ width: 11px; height: 11px; border-radius: 2px; display: inline-block; }}
+@media (max-width: 860px) {{ .top-region {{ grid-template-columns: 1fr; }} }}
 .action {{ border-left: 4px solid {C_BORDER}; padding: 12px 16px; margin: 8px 0;
            background: {C_PANEL}; border-radius: 0 6px 6px 0; }}
 .action.high {{ border-left-color: {C_RED}; }}
@@ -356,8 +385,13 @@ def compute_hero_counts(open_prs):
         "non_drafts": 0,
         "drafts": 0,
         "contribs": 0,
-        "collabs": 0,
+        "maintainers": 0,
         "ready": 0,
+        "ready_contrib": 0,
+        "ready_contrib_4w": 0,
+        "ready_contrib_nondraft": 0,
+        "ready_contrib_nondraft_4w": 0,
+        "ready_maintainer": 0,
         "untriaged": 0,
         "untriaged_4w": 0,
         "qc_triaged": 0,
@@ -389,10 +423,21 @@ def compute_hero_counts(open_prs):
             h["contribs"] += 1
             if not pr["isDraft"]:
                 h["contrib_nondraft_total"] += 1
-        if pr["_is_collab"]:
-            h["collabs"] += 1
+        if pr["_is_maintainer"]:
+            h["maintainers"] += 1
         if pr["_has_ready"]:
             h["ready"] += 1
+            old_4w = pr["_age_days"] > 28
+            if pr["_is_maintainer"]:
+                h["ready_maintainer"] += 1
+            if pr["_is_contrib"]:
+                h["ready_contrib"] += 1
+                if old_4w:
+                    h["ready_contrib_4w"] += 1
+                if not pr["isDraft"]:
+                    h["ready_contrib_nondraft"] += 1
+                    if old_4w:
+                        h["ready_contrib_nondraft_4w"] += 1
         if pr["_is_untriaged"]:
             h["untriaged"] += 1
             if pr["_age_days"] > 28:
@@ -638,18 +683,47 @@ def _bucket_dates(weeks):
 
 
 def compute_backlog_over_time(open_prs, closed_prs, weeks):
-    """End-of-week open backlog snapshot."""
+    """End-of-week open backlog snapshot, split four ways: draft vs non-draft,
+    each split by contributor vs maintainer author class.
+
+    Author class is the PR's (immutable) ``authorAssociation``; draft state and
+    the four-way split use the PR's *current* state as a proxy for its state at
+    end-of-week (we don't have historical isDraft), so near the cutoff edge the
+    split is approximate — same caveat as the single-line snapshot it replaces.
+    """
     out = []
     for s, e in weeks:
-        n = 0
+        b = {
+            "start": s,
+            "end": e,
+            "draft_contrib": 0,
+            "draft_maintainer": 0,
+            "nondraft_contrib": 0,
+            "nondraft_maintainer": 0,
+            "value": 0,
+        }
         for pr in open_prs + closed_prs:
+            author = (pr.get("author") or {}).get("login") or pr.get("_author")
+            if is_bot(author):
+                continue
             created = parse_iso(pr.get("createdAt"))
             if not created or created > e:
                 continue
             closed_at = parse_iso(pr.get("closedAt"))
-            if closed_at is None or closed_at > e:
-                n += 1
-        out.append({"start": s, "end": e, "value": n})
+            if closed_at is not None and closed_at <= e:
+                continue
+            is_maint = pr.get("authorAssociation") in MAINTAINER_ASSOCIATIONS
+            draft = pr.get("isDraft")
+            if draft and is_maint:
+                b["draft_maintainer"] += 1
+            elif draft:
+                b["draft_contrib"] += 1
+            elif is_maint:
+                b["nondraft_maintainer"] += 1
+            else:
+                b["nondraft_contrib"] += 1
+            b["value"] += 1
+        out.append(b)
     return out
 
 
@@ -666,7 +740,7 @@ def compute_opened_by_author_class(all_prs, weeks):
             author = (pr.get("author") or {}).get("login")
             if is_bot(author):
                 continue
-            if assoc in COLLAB_ASSOCIATIONS:
+            if assoc in MAINTAINER_ASSOCIATIONS:
                 b["maintainer"] += 1
             elif assoc in ("FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "NONE"):
                 b["first_time"] += 1
@@ -676,7 +750,7 @@ def compute_opened_by_author_class(all_prs, weeks):
     return out
 
 
-def compute_ready_queue_cumulative(open_prs, weeks):
+def compute_ready_queue_running_total(open_prs, weeks):
     """Cumulative count of currently-ready PRs whose label_added_at <= week.end."""
     out = []
     for s, e in weeks:
@@ -704,7 +778,7 @@ def compute_triage_velocity(all_prs, weeks, ctx):
             first_qc = None
             is_ai = False
             for c in (pr.get("comments", {}) or {}).get("nodes", []) or []:
-                if c.get("authorAssociation") not in COLLAB_ASSOCIATIONS:
+                if c.get("authorAssociation") not in MAINTAINER_ASSOCIATIONS:
                     continue
                 if ctx["triage_marker"] in (c.get("body") or ""):
                     at = parse_iso(c["createdAt"])
@@ -831,7 +905,7 @@ def compute_triager_activity(open_prs, closed_prs, weeks, ctx):
     for pr in open_prs + closed_prs:
         pr_num = pr.get("number")
         for c in (pr.get("comments", {}) or {}).get("nodes", []) or []:
-            if c.get("authorAssociation") not in COLLAB_ASSOCIATIONS:
+            if c.get("authorAssociation") not in MAINTAINER_ASSOCIATIONS:
                 continue
             author = (c.get("author") or {}).get("login")
             if not author or is_bot(author):
@@ -878,7 +952,7 @@ def compute_table_final_state(closed_prs, area_prefix, ctx):
         has_qc = False
         t_at = None
         for c in (pr.get("comments", {}) or {}).get("nodes", []) or []:
-            if c.get("authorAssociation") in COLLAB_ASSOCIATIONS and ctx[
+            if c.get("authorAssociation") in MAINTAINER_ASSOCIATIONS and ctx[
                 "triage_marker"
             ] in (c.get("body") or ""):
                 has_qc = True
@@ -928,7 +1002,7 @@ def compute_table_final_state(closed_prs, area_prefix, ctx):
         has_qc = False
         t_at = None
         for c in (pr.get("comments", {}) or {}).get("nodes", []) or []:
-            if c.get("authorAssociation") in COLLAB_ASSOCIATIONS and ctx[
+            if c.get("authorAssociation") in MAINTAINER_ASSOCIATIONS and ctx[
                 "triage_marker"
             ] in (c.get("body") or ""):
                 has_qc = True
@@ -1080,88 +1154,124 @@ def render_title(ctx, *, lag_warning=False, partial_fetch=False):
     return "".join(out)
 
 
-def render_hero_rows(hero, health):
-    rating, rating_colour = health
+def render_hero_rows(hero):
+    """Two 4-card rows. Row 1 counts all PRs; row 2 the non-draft subset.
+
+    Ready-for-review cards are scoped to contributor PRs (the queue that flows
+    through triage); maintainer-authored PRs are surfaced in their own section.
+    """
+    open_4w_colour = C_RED if hero["ready_contrib_4w"] > 0 else C_GREEN
+    nondraft_4w_colour = C_RED if hero["ready_contrib_nondraft_4w"] > 0 else C_GREEN
     c1 = [
-        {"big": rating, "sub": "based on triage backlog + queue size", "colour": rating_colour},
         {
             "big": str(hero["open_total"]),
             "sub": (
                 f'<div>{hero["non_drafts"]} non-draft · {hero["drafts"]} draft</div>'
-                f'<div>{hero["contribs"]} contributor · {hero["collabs"]} collaborator-authored</div>'
+                f'<div>{hero["contribs"]} contributor · {hero["maintainers"]} maintainer-authored</div>'
             ),
+            "label": "All open PRs",
             "colour": C_CYAN,
         },
         {
-            "big": str(hero["ready"]),
-            "sub": f'{pct(hero["ready"], hero["contrib_nondraft_total"])}% of contributor queue',
+            "big": str(hero["contribs"]),
+            "sub": f'{pct(hero["contribs"], hero["open_total"])}% of all open PRs',
+            "label": "Contributor PRs",
+            "colour": C_CYAN,
+        },
+        {
+            "big": str(hero["ready_contrib"]),
+            "sub": f'{pct(hero["ready_contrib"], hero["contribs"])}% of contributor PRs',
+            "label": "Ready to review from contributors",
             "colour": C_GREEN,
         },
         {
-            "big": str(hero["untriaged"]),
-            "sub": f'{hero["untriaged_4w"]} are &gt;4 weeks old',
-            "colour": C_RED if hero["untriaged_4w"] > 0
-            else (C_AMBER if hero["untriaged"] > 30 else C_GREEN),
+            "big": str(hero["ready_contrib_4w"]),
+            "sub": "ready &gt;4 weeks — review overdue",
+            "label": "Ready to review for more than 4 weeks",
+            "colour": open_4w_colour,
         },
     ]
     c2 = [
         {
-            "big": str(hero["qc_triaged"]),
-            "sub": f'{pct(hero["qc_triaged"], hero["contrib_nondraft_total"])}% of contributor non-drafts (Quality Criteria marker)',
-            "colour": C_BLUE,
+            "big": str(hero["non_drafts"]),
+            "sub": f'{pct(hero["non_drafts"], hero["open_total"])}% of all open PRs',
+            "label": "All open PRs (non-draft)",
+            "colour": C_CYAN,
         },
         {
-            "big": str(hero["defacto"]),
-            "sub": f'{pct(hero["defacto"], hero["contrib_nondraft_total"])}% of contributor non-drafts (engaged, no marker)',
-            "colour": C_AMBER,
+            "big": str(hero["contrib_nondraft_total"]),
+            "sub": f'{pct(hero["contrib_nondraft_total"], hero["non_drafts"])}% of non-draft PRs',
+            "label": "Contributor PRs (non-draft)",
+            "colour": C_CYAN,
         },
         {
-            "big": str(hero["ai_triaged"]),
-            "sub": f'{pct(hero["ai_triaged"], hero["qc_triaged"])}% of Quality-Criteria-triaged',
-            "colour": C_GREY,
+            "big": str(hero["ready_contrib_nondraft"]),
+            "sub": f'{pct(hero["ready_contrib_nondraft"], hero["contrib_nondraft_total"])}% of contributor non-drafts',
+            "label": "Ready to review from contributors (non-draft)",
+            "colour": C_GREEN,
         },
         {
-            "big": str(hero["bots"]),
-            "sub": f'{hero["bots_dependabot"]} dependabot · {hero["bots_other"]} other',
-            "colour": C_GREY,
+            "big": str(hero["ready_contrib_nondraft_4w"]),
+            "sub": "ready &gt;4 weeks — review overdue",
+            "label": "Ready to review for more than 4 weeks (non-draft)",
+            "colour": nondraft_4w_colour,
         },
     ]
 
     def card_html(c):
         return (
             f'<div class="card"><div class="big" style="color:{c["colour"]}">{c["big"]}</div>'
+            f'<div class="card-label">{c["label"]}</div>'
             f'<div class="sub">{c["sub"]}</div></div>'
         )
 
     return (
-        '<h2>Backlog state</h2>'
         f'<div class="hero">{"".join(card_html(c) for c in c1)}</div>'
-        '<h3>Triage coverage breakdown</h3>'
         f'<div class="hero">{"".join(card_html(c) for c in c2)}</div>'
     )
 
 
-def render_recommendations(recs):
+def render_status_box(health, recs):
+    """Right-hand status box at the very top: health rating + what-needs-attention."""
+    rating, rating_colour = health
+    out = [
+        '<aside class="status-box">',
+        '<h2>Status</h2>',
+        f'<div class="health" style="border-left-color:{rating_colour}">'
+        f'<div class="health-rating" style="color:{rating_colour}">{esc(rating)}</div>'
+        '<div class="sub">based on triage backlog + queue size</div></div>',
+        '<h3>What needs attention</h3>',
+    ]
     if not recs:
-        return (
-            "<h2>What needs attention</h2>"
-            f'<div class="action low"><div class="title">✨ No urgent actions detected</div>'
-            f'<div class="detail">Queue is in healthy shape — periodic /pr-management-triage when convenient.</div></div>'
-        )
-    out = ["<h2>What needs attention</h2>"]
-    for r in recs:
-        code = (
-            f'<code>{esc(r["action"])}</code>'
-            if r["action"] and r["action"] != "—"
-            else ""
-        )
         out.append(
-            f'<div class="action {r["priority"]}">'
-            f'<div class="title">{esc(r["icon"])} {esc(r["title"])}</div>'
-            f'<div class="detail">{esc(r["detail"])}</div>'
-            f'{code}</div>'
+            '<div class="action low"><div class="title">✨ No urgent actions detected</div>'
+            '<div class="detail">Queue is in healthy shape — periodic /pr-management-triage when convenient.</div></div>'
         )
+    else:
+        for r in recs:
+            code = (
+                f'<code>{esc(r["action"])}</code>'
+                if r["action"] and r["action"] != "—"
+                else ""
+            )
+            out.append(
+                f'<div class="action {r["priority"]}">'
+                f'<div class="title">{esc(r["icon"])} {esc(r["title"])}</div>'
+                f'<div class="detail">{esc(r["detail"])}</div>'
+                f'{code}</div>'
+            )
+    out.append("</aside>")
     return "".join(out)
+
+
+def render_top_region(hero, health, recs):
+    """Top region: hero cards (left) + status box (right)."""
+    return (
+        '<div class="top-region">'
+        f'<div class="hero-col"><h2>Backlog state</h2>{render_hero_rows(hero)}</div>'
+        f'{render_status_box(health, recs)}'
+        "</div>"
+    )
 
 
 def render_trends_over_time(*, backlog, by_author, ready_cum, triage_velocity,
@@ -1169,37 +1279,50 @@ def render_trends_over_time(*, backlog, by_author, ready_cum, triage_velocity,
     labels = [week_label(s) for s, _ in weeks]
     out = ["<h2>Trends over time</h2>"]
 
-    # backlog
+    # backlog — stacked: draft/non-draft × contributor/maintainer
+    backlog_keys = ["nondraft_contrib", "nondraft_maintainer", "draft_contrib", "draft_maintainer"]
+    backlog_colours = [C_BLUE, C_MAGENTA, C_CYAN, C_GREY]
+    backlog_legend = [
+        ("non-draft · contributors", C_BLUE),
+        ("non-draft · maintainers", C_MAGENTA),
+        ("draft · contributors", C_CYAN),
+        ("draft · maintainers", C_GREY),
+    ]
     out.append("<h3>Open backlog over time</h3>")
     out.append(
-        svg_line_chart(
-            [{"label": "open backlog", "values": [b["value"] for b in backlog], "colour": C_BLUE}],
-            x_labels=labels,
-            y_label="open count",
+        svg_stacked_horizontal_bars(
+            backlog,
+            segment_keys=backlog_keys,
+            segment_colours=backlog_colours,
+            row_labels=labels,
         )
     )
+    out.append(chart_legend(backlog_legend))
 
     # by author class
+    by_author_legend = [("first-time", C_GREEN), ("contributor", C_BLUE), ("maintainer", C_MAGENTA)]
     out.append("<h3>PRs opened by author class</h3>")
     out.append(
         svg_line_chart(
             [
-                {"label": "FIRST_TIME", "values": [b["first_time"] for b in by_author], "colour": C_GREEN},
-                {"label": "CONTRIBUTOR", "values": [b["contributor"] for b in by_author], "colour": C_BLUE},
-                {"label": "MAINTAINER", "values": [b["maintainer"] for b in by_author], "colour": C_MAGENTA},
+                {"label": "first-time", "values": [b["first_time"] for b in by_author], "colour": C_GREEN},
+                {"label": "contributor", "values": [b["contributor"] for b in by_author], "colour": C_BLUE},
+                {"label": "maintainer", "values": [b["maintainer"] for b in by_author], "colour": C_MAGENTA},
             ],
             x_labels=labels,
         )
     )
+    out.append(chart_legend(by_author_legend))
 
-    # ready cumulative
-    out.append("<h3>Ready-for-review queue size (cumulative)</h3>")
+    # ready running total
+    out.append("<h3>Ready-for-review queue size (running total)</h3>")
     out.append(
         svg_line_chart(
-            [{"label": "ready cum", "values": [b["value"] for b in ready_cum], "colour": C_GREEN}],
+            [{"label": "ready (running total)", "values": [b["value"] for b in ready_cum], "colour": C_GREEN}],
             x_labels=labels,
         )
     )
+    out.append(chart_legend([("ready for review by contributors (running total)", C_GREEN)]))
 
     # triage velocity
     out.append("<h3>Triage velocity (AI vs manual)</h3>")
@@ -1212,6 +1335,7 @@ def render_trends_over_time(*, backlog, by_author, ready_cum, triage_velocity,
             x_labels=labels,
         )
     )
+    out.append(chart_legend([("AI-drafted triage", C_MAGENTA), ("manual quality-criteria triage", C_BLUE)]))
     out.append('<div class="caveat">comments(last:25) cap may under-count older weeks.</div>')
 
     # coverage rate
@@ -1223,6 +1347,7 @@ def render_trends_over_time(*, backlog, by_author, ready_cum, triage_velocity,
             y_max=100,
         )
     )
+    out.append(chart_legend([("% of week's PRs a maintainer engaged", C_AMBER)]))
     out.append('<div class="caveat">Same comment-cap caveat as triage velocity.</div>')
     return "".join(out)
 
@@ -1243,6 +1368,7 @@ def render_closure_velocity(weekly, weeks):
             segment_colours=[C_GREEN, C_GREY],
             row_labels=labels,
         )
+        + chart_legend([("merged", C_GREEN), ("closed without merge", C_GREY)])
         + f'<div class="caveat">6-week total: {total_total} · '
         f'avg {avg}/wk · peak {peak}/wk · '
         f'<span class="green">{total_merged} merged</span> + '
@@ -1259,8 +1385,9 @@ def render_opened_vs_closed(buckets, weeks):
         ],
         x_labels=labels,
     )
+    legend = chart_legend([("opened", C_BLUE), ("closed / merged", C_GREEN)])
     if not buckets:
-        return "<h2>Opened vs closed momentum</h2>" + chart
+        return "<h2>Opened vs closed momentum</h2>" + chart + legend
     last = buckets[-1]
     six_open = sum(b["opened"] for b in buckets)
     six_close = sum(b["closed"] for b in buckets)
@@ -1270,6 +1397,7 @@ def render_opened_vs_closed(buckets, weeks):
     return (
         '<h2>Opened vs closed momentum (last 6 weeks)</h2>'
         + chart
+        + legend
         + f'<div class="caveat">Net delta this week: '
         f'<strong>{last_net:+d}</strong> PRs ({last["opened"]} opened - {last["closed"]} closed).<br>'
         f'6-week net: <strong>{six_net:+d}</strong> ({six_open} opened - {six_close} closed) — {direction_six}.'
@@ -1292,6 +1420,7 @@ def render_ready_trend(ready_trend, weeks):
         c = C_RED if last >= 30 else (C_AMBER if last >= 15 else C_GREY)
         series.append({"label": area, "values": vals, "colour": c})
     chart = svg_line_chart(series, x_labels=labels)
+    legend = chart_legend([(s["label"], s["colour"]) for s in series])
     growth_lines = []
     for area, vals in series_data.items():
         cur = vals[-1] if vals else 0
@@ -1301,8 +1430,9 @@ def render_ready_trend(ready_trend, weeks):
             f'<div><strong class="area">{esc(area)}</strong>: {cur} ready (+{delta} in last 7d)</div>'
         )
     return (
-        "<h2>Ready-for-review trend (top areas)</h2>"
+        "<h2>Ready-for-review trend by top areas (contributor PRs)</h2>"
         + chart
+        + legend
         + f'<div class="caveat">{"".join(growth_lines)}</div>'
     )
 
@@ -1330,6 +1460,12 @@ def render_closed_by_reason(weekly, weeks):
             segment_colours=[C_GREEN, C_AMBER, C_RED, C_GREY],
             row_labels=labels,
         )
+        + chart_legend([
+            ("merged", C_GREEN),
+            ("engaged-then-closed", C_AMBER),
+            ("sweep-closed", C_RED),
+            ("no-triage", C_GREY),
+        ])
         + f'<div class="caveat">6-week breakdown: '
         f'<span class="green">{tot_merged} merged</span> · '
         f'<span class="amber">{tot_resp} engaged-then-closed</span> · '
@@ -1452,6 +1588,7 @@ def render_triager_activity(rows, weeks):
             f'{wk_cells}<td>{spark}</td></tr>'
         )
     out.append("</table>")
+    out.append(chart_legend([("AI-drafted (per-week cells & sparkline)", C_MAGENTA), ("manual", C_BLUE)]))
     out.append(
         f'<div class="caveat">6-week throughput: '
         f'<span class="magenta">{total_ai} AI-assisted</span> / '
@@ -1540,8 +1677,16 @@ def render_legend():
 <dd><span class="blue">Blue</span> = opened per week. <span class="green">Green</span> = closed/merged per week.
     Where blue is above green the backlog grew; vice-versa, it shrank.</dd>
 
+<dt>Open backlog over time (stacked bars)</dt>
+<dd>End-of-week open-PR count, split four ways:
+    <span class="blue">non-draft · contributors</span>,
+    <span class="magenta">non-draft · maintainers</span>,
+    <span class="cyan">draft · contributors</span>,
+    <span class="grey">draft · maintainers</span>.
+    Author class is the immutable authorAssociation; draft state uses current state as a proxy.</dd>
+
 <dt>Ready-for-review trend</dt>
-<dd>Cumulative count of currently-ready PRs by week, per top-pressure area.
+<dd>Running total of currently-ready contributor PRs by week, per top-pressure area.
     Line colour by area's pressure band: <span class="red">red ≥ 30</span>,
     <span class="amber">amber 15–29</span>, <span class="grey">grey &lt; 15</span>.</dd>
 
@@ -1569,7 +1714,7 @@ def render_legend():
     50% reads green (happier colour wins on tie).</dd>
 
 <dt>Detailed-table columns</dt>
-<dd><span class="cyan"><strong>Contrib.</strong></span> — non-collaborator-authored PRs (denominator for contributor-scoped metrics).
+<dd><span class="cyan"><strong>Contrib.</strong></span> — contributor-authored (non-maintainer) PRs (denominator for contributor-scoped metrics).
     <span class="amber"><strong>Triaged</strong></span> — comment by OWNER/MEMBER/COLLABORATOR containing
     <code>Pull Request quality criteria</code> after the last commit.
     <span class="green"><strong>Responded</strong></span> — author commented/pushed after the triage comment.
@@ -1579,7 +1724,7 @@ def render_legend():
 <dt>Methodology</dt>
 <dd>Snapshot taken at the timestamp shown in the title bar. Open PRs via GraphQL search
     with full engagement schema (comments, latestReviews, reviewThreads, timelineItems).
-    Closed/merged via GitHub search. Triage marker: collab comment containing the literal
+    Closed/merged via GitHub search. Triage marker: maintainer comment containing the literal
     string <code>Pull Request quality criteria</code> after the last commit. Bots filtered
     at fetch time (<code>*[bot]</code>, dependabot, github-actions).</dd>
 </dl>
@@ -1591,8 +1736,26 @@ def render_summary(hero, recent_drafts):
         f'<div class="footer">Summary: {hero["open_total"]} open · '
         f'{hero["qc_triaged"]} triaged ({pct(hero["qc_triaged"], hero["contrib_nondraft_total"])}%) · '
         f'{hero["responded"]} responded · '
-        f'{hero["ready"]} ready for review · '
+        f'{hero["ready_contrib"]} ready for review from contributors · '
         f'{recent_drafts} drafted by triager in last 7d.</div>'
+    )
+
+
+def render_section_divider(title, subtitle=""):
+    sub = f'<div class="section-sub">{esc(subtitle)}</div>' if subtitle else ""
+    return f'<h1 class="section">{esc(title)}</h1>{sub}'
+
+
+def render_maintainers_section(hero):
+    """Maintainer-authored PRs — they bypass the contributor triage funnel."""
+    return (
+        '<div class="panel">'
+        f'<div class="big" style="color:{C_CYAN}">{hero["maintainers"]}</div>'
+        '<div class="card-label">Maintainer-authored open PRs</div>'
+        f'<div class="sub">{hero["ready_maintainer"]} marked ready for review. '
+        "Maintainer-authored PRs are not triaged through the contributor "
+        "quality-criteria funnel — they go straight to review.</div>"
+        "</div>"
     )
 
 
@@ -1629,8 +1792,7 @@ def render_dashboard(
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
         f"<title>{esc(ctx['repo'])} — dashboard</title>{CSS}</head><body>",
         render_title(ctx, lag_warning=lag_warning, partial_fetch=partial_fetch),
-        render_hero_rows(hero, health),
-        render_recommendations(recs),
+        render_top_region(hero, health, recs),
         render_trends_over_time(
             backlog=backlog,
             by_author=by_author,
@@ -1642,11 +1804,20 @@ def render_dashboard(
         ),
         render_closure_velocity(weekly, ctx["weeks"]),
         render_opened_vs_closed(opened_vs_closed, ctx["weeks"]),
-        render_ready_trend(ready_trend, ctx["weeks"]),
         render_closed_by_reason(weekly, ctx["weeks"]),
         render_pressure(pressure, ctx["area_prefix"]),
-        render_codeowners(codeowners_rows, hero["ready"]),
+        render_section_divider(
+            "Ready for review from contributors",
+            "Contributor PRs that cleared triage and await maintainer review.",
+        ),
+        render_ready_trend(ready_trend, ctx["weeks"]),
+        render_codeowners(codeowners_rows, hero["ready_contrib"]),
         render_funnel(funnel),
+        render_section_divider(
+            "Maintainers",
+            "Maintainer-authored PRs, which bypass the contributor triage funnel.",
+        ),
+        render_maintainers_section(hero),
         render_triager_activity(triager_activity, ctx["weeks"]),
         render_detailed_tables(table_final, table_open, ctx["cutoff"], ctx["repo"]),
         render_legend(),
@@ -1765,7 +1936,7 @@ def main():
     )
     backlog = compute_backlog_over_time(open_prs, closed_prs, ctx["weeks"])
     by_author = compute_opened_by_author_class(open_prs + closed_prs, ctx["weeks"])
-    ready_cum = compute_ready_queue_cumulative(open_prs, ctx["weeks"])
+    ready_cum = compute_ready_queue_running_total(open_prs, ctx["weeks"])
     triage_vel = compute_triage_velocity(open_prs + closed_prs, ctx["weeks"], ctx)
     coverage = compute_triage_coverage_rate(open_prs + closed_prs, ctx["weeks"])
     momentum = compute_opened_vs_closed(open_prs + closed_prs, ctx["weeks"])
