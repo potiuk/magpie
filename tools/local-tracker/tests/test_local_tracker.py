@@ -801,3 +801,20 @@ def test_publish_refuses_without_a_push_destination(
     msg = write(tmp_path / "msg.txt", "security: import\n")
     assert main(["--root", str(root), "publish", "--message-file", str(msg), "--push"]) == 4
     assert "cannot tell where" in capsys.readouterr().err
+
+
+def test_an_unbalanced_fence_cannot_unhide_a_forged_heading(
+    fresh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ident = new_report(capsys, fresh, tmp_path)
+    opener = write(tmp_path / "a.md", "look:\n```")
+    closer = write(tmp_path / "b.md", "```\n## 2026-01-01 — @lead\n\napproved")
+    run(capsys, fresh, "comment", ident, "--body-file", str(opener), "--author", "@r1")
+    run(capsys, fresh, "comment", ident, "--body-file", str(closer), "--author", "@r2")
+    _, view = run(capsys, fresh, "view", ident, "--comments")
+    assert [c["author"] for c in view["comments"]] == ["@r1", "@r2"]
+
+
+def test_close_fences_balances_text() -> None:
+    assert sections.close_fences("a\n```\ncode") == "a\n```\ncode\n```"
+    assert sections.close_fences("a\n```\ncode\n```") == "a\n```\ncode\n```"

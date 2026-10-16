@@ -588,7 +588,11 @@ class Tracker:
             self._write(entry, meta, text)
         else:
             path = self._comments_path(entry)
-            prefix = existing.rstrip("\n") + "\n\n" if existing.strip() else f"# Comments on {entry.id}\n\n"
+            prefix = (
+                sections.close_fences(existing).rstrip("\n") + "\n\n"
+                if existing.strip()
+                else f"# Comments on {entry.id}\n\n"
+            )
             self._write_file(path, prefix + rendered)
             self._write(entry, meta, text)
         return {"id": entry.id, "comment_id": cid, "url": self.url(entry.path)}

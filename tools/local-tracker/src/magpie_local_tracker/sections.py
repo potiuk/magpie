@@ -29,6 +29,33 @@ def _headings(lines: list[str]) -> list[tuple[int, int, str]]:
     return out
 
 
+def open_fence(lines: list[str]) -> str:
+    """The fence marker still open after ``lines`` (```` ``` ```` / ``~~~``), or "".
+
+    The same toggling `_headings` uses, so escaping and parsing agree on what is
+    code.
+    """
+    fence = ""
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            fence = "" if fence == marker else (fence or marker)
+    return fence
+
+
+def close_fences(text: str) -> str:
+    """``text`` with a closing line added for a fence it leaves open.
+
+    Every piece of untrusted text is balanced before it is written, and so is
+    the existing text it is appended to. Otherwise a body that *starts* with a
+    fence line could close a fence left open earlier in the file, and a heading
+    the body-local escaping skipped as "fenced" would parse as a real one.
+    """
+    marker = open_fence(text.split("\n"))
+    return f"{text.rstrip(chr(10))}\n{marker}" if marker else text
+
+
 def heading_lines(lines: list[str]) -> list[tuple[int, int, str]]:
     """(line index, level, text) for every heading outside code fences."""
     return _headings(lines)
@@ -70,7 +97,7 @@ def neutralize(text: str, managed_headings: tuple[str, ...] = ()) -> str:
     (``<`` becomes ``&lt;``, a managed heading gets a leading backslash), which
     renders as the same visible text and is never parsed as structure.
     """
-    text = _FORGEABLE.sub("&lt;", text)
+    text = close_fences(_FORGEABLE.sub("&lt;", text))
     if not managed_headings:
         return text
     managed = {h.lower() for h in managed_headings}
@@ -107,6 +134,9 @@ def _join(before: list[str], middle: list[str], after: list[str]) -> str:
     """
     while before and before[-1].strip() == "":
         before = before[:-1]
+    marker = open_fence(before)
+    if marker:
+        before = [*before, marker]  # never let inserted text continue an open fence
     while after and after[0].strip() == "":
         after = after[1:]
     out = [*before, "", *middle] if before else list(middle)
@@ -235,7 +265,7 @@ def render_entry(date: str, user: str, action: str, body: str) -> str:
 def rollup_append(existing: str | None, name: str, entry: str) -> str:
     if not existing or not ROLLUP_MARKER_RE.search(existing):
         return rollup_marker(name) + "\n" + entry + "\n"
-    return existing.rstrip("\n") + "\n\n---\n\n" + entry + "\n"
+    return close_fences(existing).rstrip("\n") + "\n\n---\n\n" + entry + "\n"
 
 
 def rollup_amend_latest(existing: str, action: str, body: str) -> str | None:
