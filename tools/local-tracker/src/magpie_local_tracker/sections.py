@@ -11,17 +11,36 @@ from dataclasses import dataclass
 _HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<text>.+?)\s*#*\s*$")
 
 
+_FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<rest>.*)$")
+
+
+def _fence_step(open_fence: str, line: str) -> tuple[str, bool]:
+    """Advance the fence state over one line, the CommonMark way.
+
+    Returns (open fence after the line, whether the line is a fence line). A
+    fence opens with three or more backticks or tildes and closes only on a
+    line of the same character, at least as long, with nothing after it.
+    """
+    m = _FENCE_RE.match(line)
+    if not m:
+        return open_fence, False
+    fence, rest = m.group("fence"), m.group("rest")
+    if open_fence:
+        if fence[0] == open_fence[0] and len(fence) >= len(open_fence) and not rest.strip():
+            return "", True
+        return open_fence, False
+    if fence[0] == "`" and "`" in rest:
+        return "", False  # an inline code span, not a fence
+    return fence, True
+
+
 def _headings(lines: list[str]) -> list[tuple[int, int, str]]:
     """(line index, level, text) for every ATX heading outside code fences."""
     out: list[tuple[int, int, str]] = []
     fence = ""
     for idx, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            marker = stripped[:3]
-            fence = "" if fence == marker else (fence or marker)
-            continue
-        if fence:
+        fence, is_fence = _fence_step(fence, line)
+        if is_fence or fence:
             continue
         m = _HEADING_RE.match(line)
         if m:
@@ -37,10 +56,7 @@ def open_fence(lines: list[str]) -> str:
     """
     fence = ""
     for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            marker = stripped[:3]
-            fence = "" if fence == marker else (fence or marker)
+        fence, _ = _fence_step(fence, line)
     return fence
 
 

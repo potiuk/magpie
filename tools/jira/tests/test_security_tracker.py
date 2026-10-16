@@ -874,3 +874,15 @@ def test_attach_from_stdin(
     result = run("attach", "12", "-", "--name", "cve.json")
     assert result.json()["name"] == "cve.json"
     assert b'{"a": 1}' in (fake.writes()[0].body or b"")
+
+
+def test_a_different_security_level_is_refused(
+    run: Run, fake: FakeJira, tmp_path: Path
+) -> None:
+    open_level = issue()
+    open_level["fields"]["security"] = {"id": "10002", "name": "All logged-in users"}
+    fake.on("GET", ISSUE, (200, open_level))
+    result = run("comment", "12", "--body-file", write(tmp_path, "c", "embargoed"))
+    assert result.code == 4
+    assert "not the configured" in result.err
+    assert fake.writes() == []

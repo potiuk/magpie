@@ -167,8 +167,10 @@ Rules that hold for every backend:
 The tracker holds embargoed vulnerability details.
 A backend **must refuse to write** to a tracker it cannot show is access-restricted, and say why, with exit `4`:
 
-- **`jira`** — every write checks that the issue carries an issue-security
-  level, and `create` always sets `tracker.jira.security_level`.
+- **`jira`** — every write checks that the issue carries exactly the
+  configured issue-security level (a scheme can define levels open to every
+  logged-in user, so "any level" is not enough), and `create` always sets
+  `tracker.jira.security_level`.
   An issue without one is refused, never "fixed" by the backend.
 - **`local-files`** — the backend refuses writes until the tracker's committed
   format descriptor records `access_restricted: true`, which only

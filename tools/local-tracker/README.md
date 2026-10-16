@@ -156,6 +156,10 @@ Skills run `publish` only after the user confirmed the proposal at the end of th
 as the contract's [publishing section](../security-tracker/contract.md#publishing-local-changes) describes.
 Closing a report in a folder-per-state tracker moves it with `git mv` or `svn mv`, so its history follows it.
 
+These steps can run outside the sandbox (through vetted-ops), in a repository a policy file names, so git is never allowed to start a program there:
+every git call runs with `core.fsmonitor=false`, an empty hooks path and `protocol.ext.allow=never`, commit and push pass `--no-verify`,
+and any git step is refused when the repository's own config sets a key outside a known-safe list (filter, merge or diff drivers, aliases, includes, URL rewrites, `gpg.program`, …).
+
 Two people allocating an ID at the same time get the same number.
 On Git the second push is rejected as non-fast-forward; on SVN the second commit fails as out of date.
 Update, rename the later report with `git mv` / `svn mv`, and publish again.

@@ -71,19 +71,38 @@ def _unquote(raw: str) -> str:
 
 
 def _has_inline_comment(raw: str) -> bool:
-    """A YAML ``# comment`` after a value: outside quotes, preceded by space."""
-    quote = ""
-    prev = " "
-    for ch in raw:
-        if quote:
-            if ch == quote:
-                quote = ""
-        elif ch in "\"'":
-            quote = ch
-        elif ch == "#" and prev.isspace():
-            return True
-        prev = ch
-    return False
+    """A YAML ``# comment`` after a value.
+
+    A quote only opens a quoted scalar when it *starts* the value (``Bob's
+    report`` is a plain scalar); inside double quotes a backslash escapes the
+    next character, inside single quotes ``''`` is a literal quote. After the
+    scalar, a ``#`` preceded by whitespace starts a comment.
+    """
+    text = raw.strip()
+    rest = text
+    if text[:1] == '"':
+        i = 1
+        while i < len(text):
+            if text[i] == "\\":
+                i += 2
+                continue
+            if text[i] == '"':
+                break
+            i += 1
+        rest = text[i + 1 :]
+    elif text[:1] == "'":
+        i = 1
+        while i < len(text):
+            if text[i] == "'":
+                if text[i + 1 : i + 2] == "'":
+                    i += 2
+                    continue
+                break
+            i += 1
+        rest = text[i + 1 :]
+    else:
+        rest = " " + text
+    return re.search(r"\s#", rest) is not None or rest.lstrip().startswith("#")
 
 
 def _split_inline_list(raw: str) -> list[str]:

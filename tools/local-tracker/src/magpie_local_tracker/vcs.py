@@ -26,12 +26,76 @@ class VcsRefused(VcsError):
     """A publish that would send something other than tracker changes."""
 
 
+# Every git call runs with the helpers git can execute switched off. These
+# operations may run outside the sandbox (vetted-op-read / vetted-op-tracker),
+# and the repository is chosen by a policy file; its own configuration must
+# not be able to start a program there.
+_GIT_SAFE = (
+    "-c", "core.fsmonitor=false",
+    "-c", "core.hooksPath=/dev/null",
+    "-c", "protocol.ext.allow=never",
+    "-c", "core.sshCommand=ssh",
+)  # fmt: skip
+
+# Repository-local configuration keys known not to run anything. Any other
+# key set in the repository's own config (filter drivers, merge or diff
+# drivers, aliases, include files, url rewrites, gpg.program, …) refuses the
+# operation: a helper there could run a program outside the sandbox.
+_SAFE_LOCAL_KEY = re.compile(
+    r"^(?:"
+    r"core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode"
+    r"|autocrlf|safecrlf|eol|symlinks|sparsecheckout|untrackedcache|splitindex|commitgraph|longpaths"
+    r"|quotepath|checkstat|trustctime)"
+    r"|extensions\.[a-z]+"
+    r"|remote\.[^\s]+\.(?:url|pushurl|fetch|push|prune|tagopt|mirror|skipdefaultupdate|promisor)"
+    r"|branch\.[^\s]+\.(?:remote|merge|pushremote|rebase|description)"
+    r"|user\.(?:name|email|signingkey|useconfigonly)"
+    r"|push\.(?:default|autosetupremote|followtags)|pull\.(?:rebase|ff)|fetch\.prune"
+    r"|init\.defaultbranch|commit\.gpgsign|tag\.gpgsign|gpg\.format"
+    r"|gc\.[a-z]+|maintenance\.[a-z.]+|index\.[a-z]+|feature\.[a-z]+"
+    r")$",
+    re.IGNORECASE,
+)
+
+
 @dataclass
 class WorkingCopy:
     kind: str  # "git", "svn", or "none"
     top: Path
 
+    def _check_git_config(self) -> None:
+        """Refuse a repository whose own config sets anything outside the
+        known-safe keys (see `_SAFE_LOCAL_KEY`). Reading config runs nothing."""
+        proc = subprocess.run(
+            ["git", "config", "--list", "--show-scope", "--null"],
+            cwd=self.top,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise VcsRefused(f"cannot read the repository's git config: {proc.stderr.strip()}")
+        risky = []
+        # With --show-scope --null git emits "scope\0key\nvalue\0" per entry.
+        fields = proc.stdout.split("\0")
+        for scope, entry in zip(fields[0::2], fields[1::2], strict=False):
+            key = entry.split("\n", 1)[0]
+            if scope in ("local", "worktree") and not _SAFE_LOCAL_KEY.match(key):
+                risky.append(key)
+        if risky:
+            raise VcsRefused(
+                "the repository's own git config sets "
+                + ", ".join(sorted(set(risky))[:5])
+                + ", which could run a program when git runs here outside the sandbox; "
+                "remove it from .git/config, or run the git step by hand"
+            )
+
     def _run(self, *args: str, check: bool = True) -> str:
+        if args and args[0] == "git":
+            if not getattr(self, "_config_checked", False):
+                self._check_git_config()
+                self._config_checked = True
+            args = ("git", *_GIT_SAFE, *args[1:])
         try:
             proc = subprocess.run(args, cwd=self.top, capture_output=True, text=True, check=False)
         except FileNotFoundError as exc:
@@ -96,11 +160,15 @@ class WorkingCopy:
             )
         prefix = "" if rel_root in ("", ".") else rel_root.rstrip("/") + "/"
         for sha in commits:
-            # -m: merge commits are compared with each parent, so a change that
-            # exists only in the merge result is seen too. -z: paths unquoted.
-            out = self._run(
-                "git", "diff-tree", "--root", "-m", "-r", "--no-commit-id", "--name-only", "-z", sha
-            )
+            # A plain commit is compared with its parent. A merge is compared
+            # with --cc: only paths that differ from *every* parent, i.e. changes
+            # made in the merge itself. What a merge brings in from a parent is
+            # judged where it was made — that parent's commits are either
+            # already at the destination or outgoing and checked here too.
+            # -z: paths unquoted.
+            parents = self._run("git", "rev-list", "--parents", "-n", "1", sha).split()[1:]
+            mode = ["--cc"] if len(parents) > 1 else ["--root"]
+            out = self._run("git", "diff-tree", *mode, "-r", "--no-commit-id", "--name-only", "-z", sha)
             paths = [p for p in out.split("\0") if p]
             stray = [p for p in paths if prefix and not p.startswith(prefix)]
             if stray:
@@ -165,7 +233,7 @@ class WorkingCopy:
                 # An earlier publish may have committed without pushing; with
                 # --push, push it now (an unknown destination was refused above).
                 if push and self._check_outgoing_scoped(rel_root):
-                    self._run("git", "push")
+                    self._run("git", "push", "--no-verify")
                     revision = self._run("git", "rev-parse", "HEAD").strip()
                     return {
                         "committed": False,
@@ -177,7 +245,7 @@ class WorkingCopy:
             with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as fh:
                 fh.write(message)
                 msg_path = fh.name
-            args = ["git", "commit", "-F", msg_path]
+            args = ["git", "commit", "--no-verify", "-F", msg_path]
             for trailer in trailers:
                 args += ["--trailer", trailer]
             args += ["--", rel_root]
@@ -189,7 +257,7 @@ class WorkingCopy:
             pushed = False
             if push:
                 self._check_outgoing_scoped(rel_root)
-                self._run("git", "push")
+                self._run("git", "push", "--no-verify")
                 pushed = True
             return {"committed": True, "pushed": pushed, "revision": revision}
         if self.kind == "svn":

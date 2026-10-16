@@ -818,3 +818,69 @@ def test_an_unbalanced_fence_cannot_unhide_a_forged_heading(
 def test_close_fences_balances_text() -> None:
     assert sections.close_fences("a\n```\ncode") == "a\n```\ncode\n```"
     assert sections.close_fences("a\n```\ncode\n```") == "a\n```\ncode\n```"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_repository_config_cannot_run_a_program(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _remote, repo = _repo_with_remote(tmp_path)
+    root = repo / "security"
+    run(capsys, root, "init", "--access-restricted")
+    marker = tmp_path / "pwned"
+    _git(repo, "config", "core.fsmonitor", f"touch {marker}")
+    assert main(["--root", str(root), "pending"]) == 4
+    assert "could run a program" in capsys.readouterr().err
+    assert not marker.exists()
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_repository_hooks_never_run_on_publish(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _remote, repo = _repo_with_remote(tmp_path)
+    marker = tmp_path / "hooked"
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    hook.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    hook.chmod(0o755)
+    root = repo / "security"
+    run(capsys, root, "init", "--access-restricted")
+    new_report(capsys, root, tmp_path)
+    msg = write(tmp_path / "msg.txt", "security: import\n")
+    code, out = run(capsys, root, "publish", "--message-file", str(msg), "--push")
+    assert code == 0 and out["pushed"]
+    assert not marker.exists()
+
+
+def test_longer_fences_are_balanced_by_length() -> None:
+    body = "````markdown\n```\nexample\n````"
+    assert sections.close_fences(body) == body
+    assert sections.close_fences("````\ncode") == "````\ncode\n````"
+
+
+def test_apostrophes_do_not_hide_an_inline_comment() -> None:
+    meta, _ = md.split("---\ntitle: a\ncustom: Bob's report # explanation\n---\n\nb\n")
+    assert meta.unsupported == "comments"
+    meta, _ = md.split('---\ntitle: "a \\" # not a comment"\n---\n\nb\n')
+    assert meta.unsupported == ""
+    meta, _ = md.split("---\ntitle: 'it''s # not a comment'\n---\n\nb\n")
+    assert meta.unsupported == ""
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_merging_the_published_branch_does_not_block_publish(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    remote, repo = _repo_with_remote(tmp_path)
+    other = tmp_path / "other"
+    _git(tmp_path, "clone", "-q", str(remote), str(other))
+    for key, value in (("user.name", "O"), ("user.email", "o@example.org"), ("commit.gpgsign", "false")):
+        _git(other, "config", key, value)
+    write(other / "src.py", "someone else's published change")
+    _git(other, "add", "src.py")
+    _git(other, "commit", "-q", "-m", "upstream work")
+    _git(other, "push", "-q")
+    root = repo / "security"
+    run(capsys, root, "init", "--access-restricted")
+    new_report(capsys, root, tmp_path)
+    msg = write(tmp_path / "msg.txt", "security: import\n")
+    run(capsys, root, "publish", "--message-file", str(msg))  # commit only
+    _git(repo, "pull", "-q", "--no-rebase", "--no-edit")  # merge the published src.py
+    code, out = run(capsys, root, "publish", "--message-file", str(msg), "--push")
+    assert code == 0 and out["pushed"]

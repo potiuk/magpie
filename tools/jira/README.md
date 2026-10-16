@@ -282,7 +282,7 @@ uv run --project <framework>/tools/jira magpie-jira-tracker --url <url> --projec
 
 **Why the level is mandatory.** Jira projects are often browsable by any logged-in user; the issue-security level is what makes a tracker private.
 `create` always sets the configured level and refuses to run without one.
-Before every write on an existing issue (`edit`, `field-set`, `comment`, `close`, `reopen`, `rollup-*`, `attach`) the backend reads the issue's `security` field and refuses with exit `4` when it is empty, before sending any content.
+Before every write on an existing issue (`edit`, `field-set`, `comment`, `close`, `reopen`, `rollup-*`, `attach`) the backend reads the issue's `security` field and refuses with exit `4` unless it is exactly the configured level, before sending any content: a scheme can define levels open to every logged-in user.
 It never sets a level on an existing issue itself: an issue without one may already have been exposed, and a human decides what to do.
 
 **Credentials are `jira_bridge.rest`'s.** Every request goes through `JiraRest.send`, so the token comes from `JIRA_API_TOKEN` or the token file
