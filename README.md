@@ -102,7 +102,7 @@ contributor and CI job pinned to one committed version with drift detection.
 1. [Download / pin a release](https://magpie.apache.org/downloads/)
 2. Set up the symlinks and git-ignores — see
    [`docs/setup/install-recipes.md`](docs/quick-start/other-install-methods.md)
-3. Ask your agent to complete the install: `/magpie-setup:setup install`
+3. Ask your agent to complete the install: `/magpie-setup install`
 
 The two are complementary, not exclusive.
 

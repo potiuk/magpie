@@ -117,3 +117,5 @@ AGENTS.md
 **/scheduled_tasks.lock
 .apache-steward/
 docs/superpowers/
+# roborev snapshots
+/.roborev/
