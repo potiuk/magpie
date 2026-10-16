@@ -102,6 +102,7 @@ SAMPLE = {
     "reason": "not planned",
     "title": "Path traversal in upload",
     "query": "upload traversal",
+    "attachment": "CVE-2026-1.json",
     "action": "Sync",
     "field": "Affected versions",
     "comment_id": "12",
@@ -199,6 +200,8 @@ EXPECTED_LOCAL = {
     "issue-list": ["list", "--state", "open", "--limit", "1000"],
     "issue-list-label": ["list", "--state", "open", "--label", "needs triage", "--limit", "1000"],
     "issue-comments": ["view", "7", "--comments"],
+    "issue-body": ["body", "7"],
+    "issue-attach": ["attach", "7", "-", "--name=CVE-2026-1.json"],
     "issue-search": ["list", "--state", "all", "--search=upload traversal", "--limit", "100"],
     "label-list": ["labels"],
     "issue-create": ["create", "--title=Path traversal in upload", "--body-file", "-"],
@@ -483,3 +486,36 @@ def test_save_works_for_translated_reads(local_policy: Path, monkeypatch: pytest
     assert code == cli.EXIT_OK
     saved = saved_dir / "view"
     assert json.loads(saved.read_text()) == {"id": "SEC-0001"}
+
+
+def test_jira_issue_type_comes_from_the_policy(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = _write_policy(tmp_path, JIRA + 'jira_issue_type = "Task"\n')
+    code = cli.main(
+        ["--config", str(path), "--caller", "security-issue-sync", "--dry-run", "issue-view", "1"]
+    )
+    assert code == cli.EXIT_OK
+    assert "--issue-type Task" in capsys.readouterr().out
+
+
+def test_backend_dir_ignores_a_wheel_install_location(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Under uvx the module sits in a writable cache; only the stable link counts."""
+    fake = tmp_path / "cache" / "lib" / "python3.13" / "site-packages" / "vetted_ops" / "tracker_backends.py"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("")
+    (tmp_path / "cache" / "lib" / "local-tracker").mkdir()  # an agent-planted sibling
+    plugin = tmp_path / "plugin" / "tools"
+    (plugin / "vetted-ops").mkdir(parents=True)
+    link = tmp_path / "home-link"
+    link.symlink_to(plugin / "vetted-ops")
+    monkeypatch.setattr(tracker_backends, "__file__", str(fake))
+    monkeypatch.setattr(tracker_backends, "STABLE_LINK", link)
+    assert tracker_backends.backend_dir("local-files") == (plugin / "local-tracker").resolve()
+
+
+def test_attachment_names_are_plain() -> None:
+    assert ops.attachment_name("CVE-2026-1234.json") == "CVE-2026-1234.json"
+    for bad in ("../x", "a/b", ".hidden", "x..json"):
+        with pytest.raises(ops.ParamError):
+            ops.attachment_name(bad)

@@ -33,6 +33,9 @@ class Metadata:
     style: str = "front-matter"
     values: dict[str, Value] = field(default_factory=dict)
     list_style: str = "inline"
+    # Set when the front matter uses YAML this parser does not model (block
+    # scalars, nested mappings, comments, …); rewriting it would lose data.
+    unsupported: str = ""
 
     def find_key(self, candidates: list[str]) -> str | None:
         """Return the stored key matching any candidate, case-insensitively."""
@@ -119,10 +122,21 @@ def split(text: str) -> tuple[Metadata, str]:
                 existing.append(_unquote(item))
                 meta.list_style = "block"
                 continue
+            if line.strip() == "":
+                continue
+            if line.lstrip().startswith("#"):
+                meta.unsupported = meta.unsupported or "comments"
+                continue
             m = _KEY_RE.match(line)
-            if not m:
+            if not m or line[:1].isspace():
+                meta.unsupported = meta.unsupported or "nested or multi-line values"
+                current_list = None
                 continue
             key, value = m.group("key").strip(), m.group("value")
+            if value.strip()[:1] in ("|", ">", "{", "&", "*", "!"):
+                meta.unsupported = (
+                    meta.unsupported or f"the YAML construct {value.strip()[:1]!r} (key {key!r})"
+                )
             if value.strip() == "":
                 meta.values[key] = None
                 current_list = key

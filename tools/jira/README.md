@@ -311,6 +311,7 @@ Under vetted-ops the URL, project and level are pinned by the policy's `[tracker
 | `comment` | `--author` is echoed but Jira records the authenticated user. |
 | `close` / `reopen` | A transition into (or out of) the *Done* category; `close` sets `Fixed` or `Won't Fix` and retries without a resolution when the screen rejects one. |
 | `attach` | Multipart upload; `--name` reduced to a base name. |
+| `body` | The description with `h1.`–`h6.` headings as markdown `#`–`######`, raw (not JSON), for `generate-cve-json --stdin`. |
 | `pending` / `publish` | No-ops: Jira writes are immediate. |
 | `doctor` | URL, project, confirmed token, configured level, `/myself`, project reachability, and whether the level exists (403/404 on the listing reports *unverified*). |
 

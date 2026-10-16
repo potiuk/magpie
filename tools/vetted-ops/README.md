@@ -509,6 +509,7 @@ root     = "/abs/path/to/the/repo/security/reports"       # the tracker folder
 # jira_url            = "https://issues.example.org/jira"
 # jira_project        = "FOOSEC"
 # jira_security_level = "Security Team"
+# jira_issue_type     = "Bug"                             # default Bug
 # jira_deployment     = "server"                          # server | cloud
 ```
 
@@ -518,7 +519,10 @@ The guarantees above carry over, because the translation lives in reviewed code
 - **The program and its code are fixed.** The backend runs from the tool
   directory installed beside vetted-ops itself — `tools/local-tracker` or
   `tools/jira` in a checkout, the same siblings inside the installed
-  `magpie-vetted-ops` plugin — never from a path a policy names. A policy can be
+  `magpie-vetted-ops` plugin — never from a path a policy names. Under
+  `uvx --from` the module runs from a wheel in a cache the agent can write to,
+  so the backend is then taken from beside the protected
+  `~/.claude/magpie/vetted-ops` link instead. A policy can be
   picked with `--config`, so a policy that could name code would let whoever
   writes one run code through the allowlisted read entry point; a `project` key
   is therefore refused. The argv is `uv run --project <that dir> <script>`
@@ -540,7 +544,7 @@ The guarantees above carry over, because the translation lives in reviewed code
 The full mapping, from the `gh` shape in the skills to the vetted operation to
 the backend subcommand, is in the contract's
 [skill-command table](../security-tracker/contract.md#from-skill-commands-to-vetted-operations).
-Seven operations exist for it:
+Nine operations exist for it:
 
 | Operation | Kind | Parameters | Notes |
 |---|---|---|---|
@@ -548,6 +552,8 @@ Seven operations exist for it:
 | `issue-reopen` | write | `number` | |
 | `issue-list-label` | read | `state label` | `issue-list` filtered by one configured label. |
 | `issue-search` | read | `query` | Plain words; a `:` is refused, so a `repo:` qualifier cannot re-target the search. |
+| `issue-body` | read | `number` | Non-GitHub only: the body as markdown sections, for `generate-cve-json --stdin`. |
+| `issue-attach` | write | `number file attachment` | Non-GitHub only: attach a workspace file under a plain name (no path, no `..`). |
 | `tracker-doctor` | read | — | The backend's setup check; replaces the GitHub pre-flight (`gh api repos/<tracker>`, roster) on `local-files` and `jira`. |
 | `tracker-pending` | read | — | `local-files` only: uncommitted changes and unpushed commits. |
 | `tracker-publish` | write | `message` | `local-files` only: commit the tracker folder and push. Runs on `vetted-op-tracker`, outside the sandbox, because the push needs credentials. |

@@ -62,14 +62,26 @@ BACKEND_SCRIPTS = {
 }
 
 
-def backend_dir(platform: str) -> Path:
-    """The trusted backend tool directory for ``platform``, beside this package.
+#: The stable path the vetted-ops plugin's SessionStart hook points at the
+#: installed plugin's ``tools/vetted-ops`` (outside every sandbox-writable root).
+STABLE_LINK = Path.home() / ".claude" / "magpie" / "vetted-ops"
 
-    ``.../vetted-ops/src/vetted_ops/tracker_backends.py`` → ``.../<dir>``: the
-    repository's ``tools/<dir>``, or the installed copy's sibling.
+
+def backend_dir(platform: str) -> Path:
+    """The trusted backend tool directory for ``platform``.
+
+    When this module runs from its source tree — ``.../vetted-ops/src/vetted_ops``,
+    which is what ``uv run --project`` on the plugin or a checkout imports — the
+    backend is its sibling: the repository's ``tools/<dir>``, or the installed
+    plugin's. When it runs from an installed wheel (``uvx --from``) the module
+    sits in a uv cache the agent can write to, so its location proves nothing;
+    the backend then comes from beside the protected stable link instead.
     """
     tool_dir, _ = BACKEND_SCRIPTS[platform]
-    return Path(__file__).resolve().parents[3] / tool_dir
+    here = Path(__file__).resolve()
+    if here.parents[1].name == "src" and (here.parents[2] / "pyproject.toml").is_file():
+        return here.parents[3] / tool_dir
+    return STABLE_LINK.resolve().parent / tool_dir
 
 
 @dataclass(frozen=True)
@@ -85,6 +97,7 @@ class TrackerBackend:
     jira_url: str = ""
     jira_project: str = ""
     jira_security_level: str = ""
+    jira_issue_type: str = "Bug"
     jira_cloud: bool = False
 
     def prefix(self) -> list[str]:
@@ -99,6 +112,8 @@ class TrackerBackend:
             self.jira_project,
             "--security-level",
             self.jira_security_level,
+            "--issue-type",
+            self.jira_issue_type,
         ]
         return [*argv, "--jira-cloud"] if self.jira_cloud else argv
 
@@ -131,6 +146,8 @@ TRANSLATIONS: dict[str, Translate] = {
     "issue-comments": lambda p: ["view", p["number"], "--comments"],
     "issue-search": lambda p: ["list", "--state", "all", f"--search={p['query']}", "--limit", "100"],
     "label-list": lambda p: ["labels"],
+    "issue-body": lambda p: ["body", p["number"]],
+    "issue-attach": lambda p: ["attach", p["number"], "-", f"--name={p['attachment']}"],
     "issue-create": lambda p: ["create", f"--title={p['title']}", "--body-file", "-"],
     "issue-add-label": lambda p: ["edit", p["number"], "--add-label", p["label"]],
     "issue-remove-label": lambda p: ["edit", p["number"], "--remove-label", p["label"]],

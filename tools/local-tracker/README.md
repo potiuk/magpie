@@ -52,7 +52,7 @@ uv run --project <framework>/tools/local-tracker magpie-local-tracker --root <tr
 (or the `MAGPIE_LOCAL_TRACKER_ROOT` environment variable).
 Every operation of the contract is a subcommand with the arguments, JSON output and exit codes the contract defines:
 `view`, `list`, `labels`, `field-get`, `create`, `edit`, `field-set`, `comment`, `close`, `reopen`,
-`rollup-append`, `rollup-amend-latest`, `attach`, `pending`, `publish`, `doctor`.
+`rollup-append`, `rollup-amend-latest`, `attach`, `body`, `pending`, `publish`, `doctor`.
 
 Two subcommands are this backend's own, used by `/magpie-setup config`:
 
@@ -148,7 +148,8 @@ Every operation writes to the working copy only.
 `pending` lists what changed under the tracker root, and `publish` commits exactly that:
 
 - **Git:** `git add -A -- <root>`, `git commit -F <message> [--trailer …] -- <root>`, then `git push` with `--push`.
-  Other staged or unstaged work in the repository is left alone.
+  Other staged or unstaged work in the repository is left alone, and a push is refused (exit `4`) when the branch also carries unpushed commits that touch anything outside the tracker folder: publishing never sends someone else's work.
+  A commit that was made but not pushed is reported by `pending` and pushed by the next `publish --push`.
 - **SVN:** `svn add` for new files, `svn rm` for missing ones, then `svn commit -F <message> <root>` — which is already the push.
 
 Skills run `publish` only after the user confirmed the proposal at the end of the session,

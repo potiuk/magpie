@@ -81,6 +81,8 @@ The last two columns are what vetted-ops runs on a non-GitHub tracker.
 | `vetted-op-read body-field-get` | `body-field-get N FIELD` | `field-get N FIELD` |
 | `vetted-op-tracker body-field-set` | `body-field-set N FIELD F` | `field-set N FIELD --value-file -` |
 | `gh api repos/<tracker> --jq .name` (Step 0 access check) | `tracker-doctor` | `doctor` |
+| `generate-cve-json <N> --attach` (reads the issue) | `issue-body N` (saved), then `generate-cve-json --stdin` | `body N` (markdown `###` sections; Jira `h3.` converted) |
+| `generate-cve-json <N> --attach` (attaches the JSON) | `issue-attach N FILE NAME` | `attach N - --name=NAME` |
 | — (end of a session) | `tracker-pending` | `pending` (`local-files` only) |
 | — (end of a session) | `tracker-publish F` | `publish --message-file - --push` (`local-files` only) |
 
@@ -125,7 +127,8 @@ These are the backend CLIs' subcommands — what the vetted operations above run
 | `reopen <id>` | — | `{id, state}` | `issue-reopen` |
 | `rollup-append <id>` | `--action A`, `--entry-body-file F`, `--user U`, `--now ISO8601` | `{id, url}` | `rollup-append` |
 | `rollup-amend-latest <id>` | `--action A`, `--entry-body-file F` | `{id, url}`; exit 4 when the latest entry's action is not `A` | `rollup-amend-latest` |
-| `attach <id> <file>` | `--name N` | `{id, name, url}` | direct (no vetted operation yet) |
+| `attach <id> <file>` | `--name N` (required when `<file>` is `-`, stdin) | `{id, name, url}` | `issue-attach` |
+| `body <id>` | — | the body as raw markdown with `###` field sections (not JSON), for `generate-cve-json --stdin` | `issue-body` |
 | `pending` | — | `{backend, changes: [...], unpushed_commits, needs_publish: bool}` | `tracker-pending` |
 | `publish` | `--message-file F`, `--trailer T` (repeatable), `--push` | `{committed, pushed, revision}` | `tracker-publish` |
 | `doctor` | — | `{backend, ok, checks: [{name, ok, detail}]}` | direct, from `/magpie-setup config` |
@@ -139,6 +142,11 @@ Rules that hold for every backend:
   `--title` exists for vetted-ops, which passes the validated one-line title as a
   single argv element with no shell; a human or skill typing a command uses
   `--title-file`.
+- **Untrusted text never forges structure.** Every marker a backend parses back
+  — comment markers and headings, the rollup marker, rollup entry summary lines,
+  managed section headings — is escaped in incoming bodies before they are
+  written, so a reporter's text cannot read back as another person's comment or
+  rollup entry, or mislead `rollup-amend-latest`.
 - **Labels and milestones are free strings.** The concrete names come from
   `tracker.labels` in `project.md`; a backend never invents a label.
 - **Body fields are `###` sections by default.** `field-get` / `field-set`

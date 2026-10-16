@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
+import errno
 import os
 import re
 from dataclasses import dataclass
@@ -175,15 +177,63 @@ class Tracker:
             raise refused(f"{path} is outside the tracker root {root}") from None
         return path
 
+    def _clean(self, text: str) -> str:
+        """Untrusted report text, with every marker the tracker parses neutralized."""
+        managed = []
+        if self.desc.comments_mode == "section":
+            managed.append(self.desc.comments_heading)
+        if self.desc.rollup_mode == "section":
+            managed.append(self.desc.rollup_heading)
+        return sections.neutralize(text, tuple(managed))
+
+    def _open(self, path: Path, flags: int, *, make_dirs: bool = False) -> int:
+        """Open a managed file by walking from the tracker root one directory
+        descriptor at a time, refusing a symlink at *every* component.
+
+        A path-based check followed by `open()` leaves a window in which a
+        parent directory can be swapped for a symlink; opening each component
+        relative to the previous descriptor with `O_NOFOLLOW` closes it.
+        """
+        rel = os.path.relpath(os.path.abspath(path), os.path.abspath(self.root))
+        parts = Path(rel).parts
+        if not parts or parts[0] == ".." or os.path.isabs(rel):
+            raise refused(f"{path} is outside the tracker root {self.root}")
+        dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        dir_fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for name in parts[:-1]:
+                try:
+                    next_fd = os.open(name, dir_flags, dir_fd=dir_fd)
+                except FileNotFoundError:
+                    if not make_dirs:
+                        raise
+                    # Created concurrently is fine: open it below like any other.
+                    with contextlib.suppress(FileExistsError):
+                        os.mkdir(name, 0o755, dir_fd=dir_fd)
+                    next_fd = os.open(name, dir_flags, dir_fd=dir_fd)
+                except OSError as exc:
+                    if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                        raise refused(
+                            f"{path} goes through a symlink or non-folder ({name}); refusing"
+                        ) from exc
+                    raise
+                os.close(dir_fd)
+                dir_fd = next_fd
+            try:
+                return os.open(parts[-1], flags | os.O_NOFOLLOW, 0o644, dir_fd=dir_fd)
+            except OSError as exc:
+                if exc.errno == errno.ELOOP:
+                    raise refused(f"{path} is a symlink; refusing to follow it") from exc
+                raise
+        finally:
+            os.close(dir_fd)
+
     def _read_file(self, path: Path) -> str:
-        """Read a managed file: contained, and opened without following a symlink,
-        so a swap between the check and the open still cannot redirect it."""
-        fd = os.open(self._contained(path), os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd, encoding="utf-8") as handle:
+        with os.fdopen(self._open(path, os.O_RDONLY), encoding="utf-8") as handle:
             return handle.read()
 
     def _write_file(self, path: Path, text: str) -> None:
-        fd = os.open(self._contained(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        fd = self._open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, make_dirs=True)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
 
@@ -198,6 +248,11 @@ class Tracker:
         return meta, body
 
     def _write(self, entry: Entry, meta: md.Metadata, body: str) -> None:
+        if meta.unsupported:
+            raise refused(
+                f"{entry.path}: its front matter uses {meta.unsupported}, which this tool cannot "
+                "rewrite without losing it; edit that report by hand, or simplify its front matter"
+            )
         key = self.desc.keys.get("updated", "")
         if key and (key in meta.values or meta.style != "none"):
             meta.values[key] = _today()
@@ -332,6 +387,7 @@ class Tracker:
         self, state: str = "open", labels: list[str] | None = None, search: str = "", limit: int = 100
     ) -> list[dict[str, object]]:
         wanted = {lb.lower() for lb in labels or []}
+        words = search.lower().split()
         out = []
         for entry in sorted(self.entries(), key=lambda e: e.number, reverse=True):
             item = self.summary(entry)
@@ -340,8 +396,10 @@ class Tracker:
             have = {str(lb).lower() for lb in item["labels"]}  # type: ignore[attr-defined]
             if not wanted <= have:
                 continue
-            if search and search.lower() not in self._read_file(entry.path).lower():
-                continue
+            if words:
+                text = self._read_file(entry.path).lower()
+                if not all(word in text for word in words):
+                    continue
             out.append(item)
             if len(out) >= limit:
                 break
@@ -376,16 +434,8 @@ class Tracker:
         # Numbering continues the prefix new reports get (``2026-`` next to an
         # older ``2025-`` series starts from the 2026 series' own maximum).
         number = max((e.number for e in self.entries() if e.prefix == self.desc.id.prefix), default=0) + 1
-        ident = self.desc.id.render(number, slugify(title))
         st = self.desc.state
         base = self.root / st.open_dir if st.mode == "directory" else self.root
-        if self.desc.layout == "folder-per-issue":
-            container = base / ident
-            path = self._issue_file(container, ident)
-        else:
-            container = path = base / f"{ident}.md"
-        if container.exists():
-            raise refused(f"{container} already exists")
         meta = md.Metadata(style=self.desc.metadata, list_style=self.desc.list_style)
         if self.desc.metadata == "none":
             meta.style = "none"
@@ -399,13 +449,27 @@ class Tracker:
             self._set(meta, "author", author)
         self._set(meta, "created", _today())
         self._set(meta, "updated", _today())
-        text = body.strip("\n") + "\n"
+        text = self._clean(body).strip("\n") + "\n"
         if self.desc.title_source == "h1":
             text = f"# {title}\n\n{text}"
-        self._contained(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._write_file(path, md.render(meta, text))
-        return {"id": ident, "url": self.url(path), "path": str(path)}
+        rendered = md.render(meta, text)
+        # Reserve the ID with an exclusive create: two writers that picked the
+        # same number cannot both succeed, and the loser takes the next one.
+        for _attempt in range(50):
+            ident = self.desc.id.render(number, slugify(title))
+            if self.desc.layout == "folder-per-issue":
+                path = self._issue_file(base / ident, ident)
+            else:
+                path = base / f"{ident}.md"
+            try:
+                fd = self._open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, make_dirs=True)
+            except FileExistsError:
+                number += 1
+                continue
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(rendered)
+            return {"id": ident, "url": self.url(path), "path": str(path)}
+        raise TrackerError("could not reserve a new tracker ID after 50 attempts", 5)
 
     def edit(
         self,
@@ -439,8 +503,10 @@ class Tracker:
             if self.desc.title_source == "key":
                 self._set(meta, "title", title)
             else:
-                current = re.sub(r"^# .+$", f"# {title}", current, count=1, flags=re.MULTILINE)
+                new_h1 = f"# {title}"
+                current = re.sub(r"^# .+$", lambda _m: new_h1, current, count=1, flags=re.MULTILINE)
         if body is not None:
+            body = self._clean(body)
             _, managed = self._split_managed(current)
             head = ""
             if self.desc.title_source == "h1":
@@ -455,7 +521,9 @@ class Tracker:
         entry = self.resolve(ident)
         meta, body = self._read(entry)
         main, managed = self._split_managed(body)
-        new_main, created = sections.set_field(main, heading, value, self.desc.field_heading_level)
+        new_main, created = sections.set_field(
+            main, heading, self._clean(value), self.desc.field_heading_level
+        )
         self._write(entry, meta, new_main + ("\n" + managed.lstrip("\n") if managed else ""))
         return {"id": entry.id, "heading": heading, "created": created}
 
@@ -564,18 +632,22 @@ class Tracker:
     def _rollup_target(self, entry: Entry) -> Path:
         return entry.path if self.desc.rollup_mode == "section" else self._rollup_path(entry)
 
-    def attach(self, ident: str, source: Path, name: str | None) -> dict[str, object]:
+    def body(self, ident: str) -> str:
+        """The report body without metadata or managed sections: the `### Field`
+        markdown generate-cve-json reads on stdin."""
+        entry = self.resolve(ident)
+        _, text = self._read(entry)
+        main, _ = self._split_managed(text)
+        return main.strip("\n") + "\n"
+
+    def attach(self, ident: str, content: bytes, name: str) -> dict[str, object]:
         self.require_writable()
         entry = self.resolve(ident)
-        if not source.is_file():
-            raise not_found(f"{source} is not a file")
-        safe = Path(name or source.name).name
+        safe = Path(name).name
         if safe in ("", ".", ".."):
             raise TrackerError("invalid attachment name", 2)
         target = self._attachments_dir(entry) / safe
-        self._contained(target)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self._contained(target), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        fd = self._open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, make_dirs=True)
         with os.fdopen(fd, "wb") as handle:
-            handle.write(source.read_bytes())
+            handle.write(content)
         return {"id": entry.id, "name": safe, "url": self.url(target)}

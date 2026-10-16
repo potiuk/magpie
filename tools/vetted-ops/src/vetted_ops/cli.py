@@ -122,6 +122,8 @@ def _validate_params(
             resolved[name] = ops_mod.title(raw)
         elif name == "query":
             resolved[name] = ops_mod.query(raw)
+        elif name == "attachment":
+            resolved[name] = ops_mod.attachment_name(raw)
         elif name == "ghsa":
             resolved[name] = ops_mod.ghsa(raw)
         elif name in {"item_id", "content_id"}:

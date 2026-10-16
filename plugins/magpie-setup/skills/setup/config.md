@@ -244,7 +244,7 @@ When a vetted-ops policy exists, show the `[tracker]` table it needs —
 `platform`, and `root` or the `jira_*` target (the backend's code comes from the tool installed beside vetted-ops, never from the policy)
 ([vetted-ops → Tracker backends](../../../../tools/vetted-ops/README.md#tracker-backends)) —
 and write it only on the user's confirmation; the policy is a security control, not configuration this step may change unasked.
-Grant the security callers `issue-create`, `issue-search`, `issue-list-label`, `issue-reopen`, `tracker-doctor`, `tracker-pending` and `tracker-publish` in the same diff.
+Grant the security callers `issue-create`, `issue-search`, `issue-list-label`, `issue-reopen`, `issue-body`, `issue-attach`, `tracker-doctor`, `tracker-pending` and `tracker-publish` in the same diff.
 
 ## Step 3b — Record what this run reconciled
 

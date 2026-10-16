@@ -38,6 +38,7 @@ from jira_bridge.tracker_client import (
 )
 
 _KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*-\d+$")
+_RAW = object()  # an operation that already wrote its own (non-JSON) output
 _VIEW_FIELDS = "summary,status,resolution,labels,assignee,fixVersions,reporter,created,updated,description,security"
 _LIST_FIELDS = "summary,status,resolution,labels,updated"
 _LABEL_SCAN_CAP = 5000
@@ -346,7 +347,7 @@ def op_edit(client: JiraClient, cfg: Config, args: argparse.Namespace) -> Any:
 
 def op_comment(client: JiraClient, cfg: Config, args: argparse.Namespace) -> Any:
     key = expand_id(args.id, cfg.project)
-    body = _read_text(args.body_file, "body")
+    body = markup.neutralize(_read_text(args.body_file, "body"))
     guarded_issue(client, key)
     data = client.call(
         "POST", f"/rest/api/2/issue/{key}/comment", payload={"body": body}
@@ -451,7 +452,7 @@ def _rollup_user(client: JiraClient, user: str | None) -> str:
 def op_rollup_append(client: JiraClient, cfg: Config, args: argparse.Namespace) -> Any:
     key = expand_id(args.id, cfg.project)
     action = _single_line(args.action, "--action")
-    entry_body = _read_text(args.entry_body_file, "entry body")
+    entry_body = markup.neutralize(_read_text(args.entry_body_file, "entry body"))
     date = _date(args.now)
     guarded_issue(client, key)
     user = _rollup_user(client, args.user)
@@ -480,7 +481,7 @@ def op_rollup_amend_latest(
 ) -> Any:
     key = expand_id(args.id, cfg.project)
     action = _single_line(args.action, "--action")
-    entry_body = _read_text(args.entry_body_file, "entry body")
+    entry_body = markup.neutralize(_read_text(args.entry_body_file, "entry body"))
     guarded_issue(client, key)
     existing = _find_rollup(client, key)
     entries = markup.parse_rollup(str(existing.get("body") or "")) if existing else []
@@ -501,15 +502,29 @@ def op_rollup_amend_latest(
     return {"id": key, "url": client.comment_url(key, comment_id)}
 
 
+def op_body(client: JiraClient, cfg: Config, args: argparse.Namespace) -> Any:
+    """The description as markdown `### Field` sections, for generate-cve-json --stdin."""
+    key = expand_id(args.id, cfg.project)
+    data = client.issue(key, "description")
+    description = str((data.get("fields") or {}).get("description") or "")
+    sys.stdout.write(markup.to_markdown_headings(description).strip("\n") + "\n")
+    return _RAW
+
+
 def op_attach(client: JiraClient, cfg: Config, args: argparse.Namespace) -> Any:
     key = expand_id(args.id, cfg.project)
-    path = Path(args.file)
-    if not path.is_file():
-        raise UsageError(f"attachment {args.file} is not a readable file")
-    name = Path(args.name).name if args.name else path.name
+    if args.file == "-":
+        if not args.name:
+            raise UsageError("attaching from stdin needs --name")
+        content, name = sys.stdin.buffer.read(), Path(args.name).name
+    else:
+        path = Path(args.file)
+        if not path.is_file():
+            raise UsageError(f"attachment {args.file} is not a readable file")
+        name = Path(args.name).name if args.name else path.name
+        content = path.read_bytes()
     if not name:
         raise UsageError("attachment name is empty")
-    content = path.read_bytes()
     guarded_issue(client, key)
     data = client.attach(key, name, content)
     first = data[0] if isinstance(data, list) and data else {}
@@ -731,6 +746,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--action", required=True)
     p.add_argument("--entry-body-file", required=True)
 
+    p = add(
+        "body",
+        op_body,
+        "Print the description as markdown sections (for generate-cve-json --stdin).",
+    )
+    p.add_argument("id")
+
     p = add("attach", op_attach, "Attach a file.")
     p.add_argument("id")
     p.add_argument("file")
@@ -801,7 +823,9 @@ def main(
             raise UsageError(
                 "project key not configured: set SECURITY_TRACKER_PROJECT or pass --project"
             )
-        _emit(args.func(client, cfg, args))
+        result = args.func(client, cfg, args)
+        if result is not _RAW:
+            _emit(result)
         return 0
     except TrackerError as exc:
         print(f"magpie-jira-tracker: error: {exc}", file=sys.stderr)

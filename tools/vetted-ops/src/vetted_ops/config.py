@@ -179,6 +179,7 @@ def _tracker_backend(raw: object) -> TrackerBackend | None:
         jira_url=url.rstrip("/"),
         jira_project=key,
         jira_security_level=_one_line(raw, "jira_security_level"),
+        jira_issue_type=_one_line(raw, "jira_issue_type") if "jira_issue_type" in raw else "Bug",
         jira_cloud=deployment == "cloud",
     )
 

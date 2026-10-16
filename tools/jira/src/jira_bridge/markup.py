@@ -131,6 +131,37 @@ class RollupEntry:
     body: str
 
 
+_ANCHOR_RE = re.compile(r"\{(?=anchor:magpie-status-rollup)", re.IGNORECASE)
+
+
+def neutralize(text: str) -> str:
+    """Make untrusted comment or rollup text unable to forge rollup structure.
+
+    The text usually comes from outside the team. Written verbatim, a body that
+    opens with the rollup anchor would be taken for the rollup comment, and a
+    line shaped like ``*YYYY-MM-DD · @user · Action*`` would read back as a
+    rollup entry by someone else — misleading `rollup-amend-latest` too. Both
+    are escaped with a wiki-markup backslash, which renders the same visible
+    text and is never parsed as structure.
+    """
+    text = _ANCHOR_RE.sub("\\{", text)
+    return "\n".join(
+        "\\" + line if _SUMMARY_RE.match(line) else line for line in text.split("\n")
+    )
+
+
+_WIKI_HEADING_RE = re.compile(r"^h([1-6])\.\s+(.*)$")
+
+
+def to_markdown_headings(text: str) -> str:
+    """Wiki-markup headings (`h3. Field`) as markdown (`### Field`); nothing else changes."""
+    out = []
+    for line in text.split("\n"):
+        m = _WIKI_HEADING_RE.match(line)
+        out.append("#" * int(m.group(1)) + " " + m.group(2) if m else line)
+    return "\n".join(out)
+
+
 def is_rollup(text: str) -> bool:
     """True when ``text`` is a rollup comment (first non-empty line is the marker)."""
     for line in text.splitlines():

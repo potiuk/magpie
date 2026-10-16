@@ -44,6 +44,38 @@ def find_section(body: str, heading: str, level: int | None = None) -> tuple[int
     return None
 
 
+# The markers this tool trusts when it reads a report back: comment markers,
+# the rollup marker, and the rollup's <details>/<summary> entry lines.
+_FORGEABLE = re.compile(
+    r"<(?=/?details\b|summary\b|!--\s*comment\s+id=|!--[^\n]*?status rollup v\d)",
+    re.IGNORECASE,
+)
+
+
+def neutralize(text: str, managed_headings: tuple[str, ...] = ()) -> str:
+    """Make untrusted text unable to forge structure.
+
+    Report, comment and rollup text usually comes from outside the team (a
+    reporter's mail, a scanner finding). Written verbatim, a line such as
+    ``<!-- comment id=9 author=@lead … -->`` would read back as a comment by
+    someone else, a ``<details><summary>…</summary>`` line as a rollup entry —
+    misleading `rollup-amend-latest` too — and a ``## Comments`` heading as the
+    start of the managed comment section. Each such marker is escaped
+    (``<`` becomes ``&lt;``, a managed heading gets a leading backslash), which
+    renders as the same visible text and is never parsed as structure.
+    """
+    text = _FORGEABLE.sub("&lt;", text)
+    if not managed_headings:
+        return text
+    managed = {h.lower() for h in managed_headings}
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        m = _HEADING_RE.match(line)
+        if m and len(m.group("hashes")) <= 2 and m.group("text").strip().lower() in managed:
+            lines[i] = "\\" + line
+    return "\n".join(lines)
+
+
 def get_field(body: str, heading: str) -> str | None:
     found = find_section(body, heading)
     if not found:
@@ -106,9 +138,15 @@ class Comment:
 
 
 def render_comment(comment_id: int, author: str, date: str, body: str, level: int) -> str:
+    # Hand-written comments are recognised by their headings, so a heading
+    # inside a comment body would read back as a comment by someone else:
+    # escape every heading line in it, as well as the markers.
+    safe = "\n".join(
+        "\\" + ln if _HEADING_RE.match(ln) else ln for ln in neutralize(body.strip()).split("\n")
+    )
     return (
         f"<!-- comment id={comment_id} author={author} date={date} -->\n"
-        f"{'#' * level} {date[:10]} — {author}\n\n{body.strip()}\n"
+        f"{'#' * level} {date[:10]} — {author}\n\n{safe}\n"
     )
 
 
@@ -173,7 +211,7 @@ def rollup_marker(name: str) -> str:
 
 
 def render_entry(date: str, user: str, action: str, body: str) -> str:
-    trimmed = "\n".join(line.lstrip() for line in body.strip("\n").split("\n"))
+    trimmed = "\n".join(line.lstrip() for line in neutralize(body).strip("\n").split("\n"))
     return f"<details><summary>{date} · {user} · {action}</summary>\n\n{trimmed}\n\n</details>"
 
 

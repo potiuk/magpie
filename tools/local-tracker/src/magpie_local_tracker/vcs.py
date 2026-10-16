@@ -22,6 +22,10 @@ class VcsError(RuntimeError):
     pass
 
 
+class VcsRefused(VcsError):
+    """A publish that would send something other than tracker changes."""
+
+
 @dataclass
 class WorkingCopy:
     kind: str  # "git", "svn", or "none"
@@ -51,6 +55,29 @@ class WorkingCopy:
                 {"status": ln[0], "path": ln[8:].strip()} for ln in out.splitlines() if ln and ln[0] != " "
             ]
         return []
+
+    def outgoing(self) -> list[str]:
+        """Commits a push would send: on this branch and on no remote."""
+        if self.kind != "git":
+            return []
+        out = self._run("git", "rev-list", "HEAD", "--not", "--remotes", check=False)
+        return [ln for ln in out.split() if ln]
+
+    def _check_outgoing_scoped(self, rel_root: str) -> None:
+        """Refuse a push that would also publish commits touching files outside the
+        tracker folder: on a shared branch those are someone else's work."""
+        prefix = rel_root.rstrip("/") + "/"
+        for sha in self.outgoing():
+            paths = self._run("git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha).split(
+                "\n"
+            )
+            stray = [p for p in paths if p and not p.startswith(prefix)]
+            if stray:
+                raise VcsRefused(
+                    f"the branch has unpushed commit {sha[:12]} touching files outside {rel_root}/ "
+                    f"({', '.join(stray[:3])}); pushing would publish them too. Push or move that work "
+                    "first, or keep the tracker on its own branch."
+                )
 
     def unpushed(self) -> int | None:
         """Commits on this Git branch not yet on its upstream; None when unknown.
@@ -102,6 +129,8 @@ class WorkingCopy:
     def publish(self, root: Path, message: str, trailers: list[str], push: bool) -> dict[str, object]:
         rel_root = self.rel(root)
         if self.kind == "git":
+            if push:
+                self._check_outgoing_scoped(rel_root)
             self._run("git", "add", "-A", "--", rel_root)
             if not self._run("git", "diff", "--cached", "--name-only", "--", rel_root).strip():
                 unpushed = self.unpushed()
@@ -130,6 +159,7 @@ class WorkingCopy:
             revision = self._run("git", "rev-parse", "HEAD").strip()
             pushed = False
             if push:
+                self._check_outgoing_scoped(rel_root)
                 self._run("git", "push")
                 pushed = True
             return {"committed": True, "pushed": pushed, "revision": revision}

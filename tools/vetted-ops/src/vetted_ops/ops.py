@@ -261,6 +261,16 @@ def tracker_id(value: str) -> str:
     return _check(_TRACKER_ID, value, "tracker issue id")
 
 
+_ATTACHMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+
+
+def attachment_name(value: str) -> str:
+    """A plain attachment file name (``CVE-2026-1234.json``): no path, no ``..``."""
+    if ".." in value:
+        raise ParamError(f"attachment name may not contain '..': {value!r}")
+    return _check(_ATTACHMENT, value, "attachment name")
+
+
 _QUERY_MAX = 200
 
 
@@ -1061,6 +1071,28 @@ def _not_on_github(op: str, reason: str) -> Callable[..., list[str]]:
 
     return _build
 
+
+_register(
+    Op(
+        name="issue-body",
+        params=("number",),
+        backend="tracker-cli",
+        summary="Print a non-GitHub tracker issue's body as markdown sections (for generate-cve-json --stdin).",
+        build=_not_on_github("issue-body", "generate-cve-json reads the GitHub issue itself"),
+    )
+)
+
+_register(
+    Op(
+        name="issue-attach",
+        params=("number", "file", "attachment"),
+        backend="tracker-cli",
+        writes=True,
+        summary="Attach a workspace file to a non-GitHub tracker issue under a plain name.",
+        body_files=("file",),
+        build=_not_on_github("issue-attach", "use generate-cve-json --attach"),
+    )
+)
 
 _register(
     Op(

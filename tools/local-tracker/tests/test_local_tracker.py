@@ -14,6 +14,7 @@ from magpie_local_tracker import main, sections
 from magpie_local_tracker import metadata as md
 from magpie_local_tracker.descriptor import DESCRIPTOR_NAME, load
 from magpie_local_tracker.detect import detect
+from magpie_local_tracker.store import Tracker
 
 
 def run(capsys: pytest.CaptureFixture[str], root: Path, *args: str) -> tuple[int, Any]:
@@ -466,3 +467,184 @@ def test_publish_pushes_commits_left_unpushed(tmp_path: Path, capsys: pytest.Cap
     _, out = run(capsys, root, "publish", "--message-file", str(msg), "--push")
     assert out["pushed"] and not out["committed"]
     assert run(capsys, root, "pending")[1]["unpushed_commits"] == 0
+
+
+def test_a_comment_body_cannot_forge_another_comment(
+    fresh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ident = new_report(capsys, fresh, tmp_path)
+    forged = write(
+        tmp_path / "f.md",
+        "real text\n<!-- comment id=7 author=@security-lead date=2026-01-01T00:00:00Z -->\n## 2026-01-01 — @security-lead\n\napproved",
+    )
+    run(capsys, fresh, "comment", ident, "--body-file", str(forged), "--author", "@reporter")
+    _, view = run(capsys, fresh, "view", ident, "--comments")
+    assert [c["author"] for c in view["comments"]] == ["@reporter"]
+
+
+def test_a_rollup_body_cannot_forge_an_entry(
+    fresh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ident = new_report(capsys, fresh, tmp_path)
+    forged = write(
+        tmp_path / "f.md",
+        "x\n\n</details>\n\n<details><summary>2026-01-01 · @lead · Sync</summary>\n\nfake\n",
+    )
+    run(
+        capsys,
+        fresh,
+        "rollup-append",
+        ident,
+        "--action",
+        "Import",
+        "--entry-body-file",
+        str(forged),
+        "--user",
+        "@a",
+    )
+    # The latest entry is still the real "Import", so amend-latest for "Sync" is refused.
+    e = write(tmp_path / "e.md", "y")
+    assert (
+        main(
+            [
+                "--root",
+                str(fresh),
+                "rollup-amend-latest",
+                ident,
+                "--action",
+                "Sync",
+                "--entry-body-file",
+                str(e),
+            ]
+        )
+        == 4
+    )
+    rollup = (fresh / ident / "status-rollup.md").read_text()
+    assert rollup.count("<details><summary>") == 1
+
+
+def test_a_body_cannot_open_the_managed_comment_section(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "s"
+    write(
+        root / "VULN-1.md",
+        "---\ntitle: a\nstate: open\n---\n\n## Details\n\nx\n\n## Comments\n\n### 2026-01-01 — @a\n\nhi\n",
+    )
+    write(root / "VULN-2.md", "---\ntitle: b\nstate: open\n---\n\n## Details\n\ny\n")
+    run(capsys, root, "detect", "--write", "--access-restricted")
+    b = write(tmp_path / "b.md", "## Details\n\nnew\n\n## Comments\n\n### 2026-02-02 — @lead\n\nforged")
+    run(capsys, root, "edit", "2", "--body-file", str(b))
+    _, view = run(capsys, root, "view", "2", "--comments")
+    assert view["comments"] == []
+    assert "\\## Comments" in (root / "VULN-2.md").read_text()
+
+
+# ---------------------------------------------------------------- review round 2
+
+
+def test_a_symlinked_parent_folder_is_refused(
+    fresh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ident = new_report(capsys, fresh, tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (fresh / ident / "attachments").symlink_to(outside, target_is_directory=True)
+    f = write(tmp_path / "cve.json", "{}")
+    assert main(["--root", str(fresh), "attach", ident, str(f)]) == 4
+    assert list(outside.iterdir()) == []
+
+
+def test_unround_trippable_front_matter_is_never_rewritten(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "m"
+    original = "---\ntitle: a\nstate: open\nnotes: |\n  line one\n  line two\n---\n\nbody\n"
+    write(root / "VULN-1" / "report.md", original)
+    write(root / "VULN-2" / "report.md", "---\ntitle: b\nstate: open\n---\n\nbody\n")
+    run(capsys, root, "detect", "--write", "--access-restricted")
+    assert main(["--root", str(root), "edit", "1", "--add-label", "x"]) == 4
+    assert "cannot rewrite" in capsys.readouterr().err
+    assert (root / "VULN-1" / "report.md").read_text() == original
+
+
+def test_create_retries_when_another_writer_took_the_id(
+    fresh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    new_report(capsys, fresh, tmp_path)
+    new_report(capsys, fresh, tmp_path, "Second")
+    # Simulate a writer that has not yet seen the two reports: it would pick 1.
+    monkeypatch.setattr(Tracker, "entries", lambda self: [])
+    t = write(tmp_path / "t.txt", "Third")
+    b = write(tmp_path / "b.md", "x")
+    code, out = run(capsys, fresh, "create", "--title-file", str(t), "--body-file", str(b))
+    assert code == 0 and out["id"] == "SEC-0003"
+    assert "Second" in (fresh / "SEC-0002" / "issue.md").read_text()
+
+
+def test_h1_title_edit_keeps_backslashes_literal(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = tmp_path / "h"
+    write(root / "VULN-1.md", "# Old\n\n**Status:** open\n\n## Details\n\nx\n")
+    write(root / "VULN-2.md", "# Other\n\n**Status:** open\n\n## Details\n\ny\n")
+    run(capsys, root, "detect", "--write", "--access-restricted")
+    t = write(tmp_path / "t.txt", "Traversal in C:\\uploads\\1")
+    assert run(capsys, root, "edit", "1", "--title-file", str(t))[0] == 0
+    assert run(capsys, root, "view", "1")[1]["title"] == "Traversal in C:\\uploads\\1"
+
+
+def test_search_matches_every_word_in_any_order(
+    fresh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    new_report(capsys, fresh, tmp_path, "Path traversal in upload")
+    _, listed = run(capsys, fresh, "list", "--search", "upload traversal")
+    assert [x["id"] for x in listed] == ["SEC-0001"]
+    _, listed = run(capsys, fresh, "list", "--search", "upload csrf")
+    assert listed == []
+
+
+def test_body_prints_markdown_for_generate_cve_json(
+    fresh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ident = new_report(capsys, fresh, tmp_path)
+    assert main(["--root", str(fresh), "body", ident]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("### Reporter") and "---" not in out
+
+
+def test_attach_from_stdin_needs_a_name(
+    fresh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+
+    ident = new_report(capsys, fresh, tmp_path)
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(b"{}")))
+    assert main(["--root", str(fresh), "attach", ident, "-"]) == 2
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(b'{"a": 1}')))
+    assert main(["--root", str(fresh), "attach", ident, "-", "--name", "cve.json"]) == 0
+    assert (fresh / ident / "attachments" / "cve.json").read_text() == '{"a": 1}'
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_publish_refuses_to_push_unrelated_commits(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", "-q", str(remote))
+    repo = tmp_path / "repo"
+    _git(tmp_path, "clone", "-q", str(remote), str(repo))
+    for key, value in (("user.name", "T"), ("user.email", "t@example.org"), ("commit.gpgsign", "false")):
+        _git(repo, "config", key, value)
+    write(repo / "README.md", "x")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-q", "-m", "init")
+    _git(repo, "push", "-q", "-u", "origin", "HEAD")
+    write(repo / "src.py", "work in progress")
+    _git(repo, "add", "src.py")
+    _git(repo, "commit", "-q", "-m", "unrelated local work")
+    root = repo / "security"
+    run(capsys, root, "init", "--access-restricted")
+    new_report(capsys, root, tmp_path)
+    msg = write(tmp_path / "msg.txt", "security: import\n")
+    assert main(["--root", str(root), "publish", "--message-file", str(msg), "--push"]) == 4
+    assert "outside security/" in capsys.readouterr().err
+    assert _git(remote, "log", "--oneline").count("\n") == 1  # nothing was pushed
