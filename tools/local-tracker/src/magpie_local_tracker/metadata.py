@@ -70,6 +70,22 @@ def _unquote(raw: str) -> str:
     return raw
 
 
+def _has_inline_comment(raw: str) -> bool:
+    """A YAML ``# comment`` after a value: outside quotes, preceded by space."""
+    quote = ""
+    prev = " "
+    for ch in raw:
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and prev.isspace():
+            return True
+        prev = ch
+    return False
+
+
 def _split_inline_list(raw: str) -> list[str]:
     inner = raw.strip()[1:-1]
     items: list[str] = []
@@ -115,6 +131,8 @@ def split(text: str) -> tuple[Metadata, str]:
                 return meta, body.lstrip("\n")
             if current_list and re.match(r"^\s*-\s+", line):
                 item = re.sub(r"^\s*-\s+", "", line)
+                if _has_inline_comment(item):
+                    meta.unsupported = meta.unsupported or "comments"
                 existing = meta.values.get(current_list)
                 if not isinstance(existing, list):
                     existing = []
@@ -133,6 +151,8 @@ def split(text: str) -> tuple[Metadata, str]:
                 current_list = None
                 continue
             key, value = m.group("key").strip(), m.group("value")
+            if _has_inline_comment(value):
+                meta.unsupported = meta.unsupported or "comments"
             if value.strip()[:1] in ("|", ">", "{", "&", "*", "!"):
                 meta.unsupported = (
                     meta.unsupported or f"the YAML construct {value.strip()[:1]!r} (key {key!r})"

@@ -56,42 +56,71 @@ class WorkingCopy:
             ]
         return []
 
-    def outgoing(self) -> list[str]:
-        """Commits a push would send: on this branch and on no remote."""
+    def push_destination(self) -> str | None:
+        """The remote-tracking ref `git push` sends this branch to (`@{push}`), or None.
+
+        Outgoing commits are measured against that ref, not against "every
+        remote": a commit already on `origin/feature` but not on `origin/main`
+        would still be sent when the branch pushes to `main`.
+        """
+        if self.kind != "git":
+            return None
+        try:
+            ref = self._run("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}").strip()
+            if not ref:
+                return None
+            self._run("git", "rev-parse", "--verify", "--quiet", ref)
+        except VcsError:
+            return None
+        return ref
+
+    def outgoing(self) -> list[str] | None:
+        """Commits a push would send; None when the push destination is unknown."""
         if self.kind != "git":
             return []
-        out = self._run("git", "rev-list", "HEAD", "--not", "--remotes", check=False)
+        dest = self.push_destination()
+        if dest is None:
+            return None
+        out = self._run("git", "rev-list", "HEAD", "--not", dest)
         return [ln for ln in out.split() if ln]
 
-    def _check_outgoing_scoped(self, rel_root: str) -> None:
-        """Refuse a push that would also publish commits touching files outside the
-        tracker folder: on a shared branch those are someone else's work."""
-        prefix = rel_root.rstrip("/") + "/"
-        for sha in self.outgoing():
-            paths = self._run("git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha).split(
-                "\n"
+    def _check_outgoing_scoped(self, rel_root: str) -> list[str]:
+        """Refuse a push that would also publish anything outside the tracker
+        folder — on a shared branch that is someone else's work — or whose
+        destination cannot be established. Returns the outgoing commits."""
+        commits = self.outgoing()
+        if commits is None:
+            raise VcsRefused(
+                "cannot tell where `git push` would send this branch (no upstream or push destination); "
+                "set one (for example `git push -u origin <branch>` once, by hand) before publishing"
             )
-            stray = [p for p in paths if p and not p.startswith(prefix)]
+        prefix = "" if rel_root in ("", ".") else rel_root.rstrip("/") + "/"
+        for sha in commits:
+            # -m: merge commits are compared with each parent, so a change that
+            # exists only in the merge result is seen too. -z: paths unquoted.
+            out = self._run(
+                "git", "diff-tree", "--root", "-m", "-r", "--no-commit-id", "--name-only", "-z", sha
+            )
+            paths = [p for p in out.split("\0") if p]
+            stray = [p for p in paths if prefix and not p.startswith(prefix)]
             if stray:
                 raise VcsRefused(
                     f"the branch has unpushed commit {sha[:12]} touching files outside {rel_root}/ "
                     f"({', '.join(stray[:3])}); pushing would publish them too. Push or move that work "
                     "first, or keep the tracker on its own branch."
                 )
+        return commits
 
     def unpushed(self) -> int | None:
-        """Commits on this Git branch not yet on its upstream; None when unknown.
+        """Commits not yet at the push destination; None when that is unknown.
 
         A publish whose commit succeeded but whose push failed leaves the tracker
         clean yet unpublished; this is how `pending` and `publish` still see it.
         """
         if self.kind != "git":
             return 0
-        try:
-            out = self._run("git", "rev-list", "--count", "@{upstream}..HEAD")
-        except VcsError:
-            return None
-        return int(out.strip() or 0)
+        commits = self.outgoing()
+        return None if commits is None else len(commits)
 
     def remotes(self) -> list[str]:
         if self.kind == "git":
@@ -133,9 +162,9 @@ class WorkingCopy:
                 self._check_outgoing_scoped(rel_root)
             self._run("git", "add", "-A", "--", rel_root)
             if not self._run("git", "diff", "--cached", "--name-only", "--", rel_root).strip():
-                unpushed = self.unpushed()
-                if push and unpushed:
-                    # An earlier publish committed but did not push: push it now.
+                # An earlier publish may have committed without pushing; with
+                # --push, push it now (an unknown destination was refused above).
+                if push and self._check_outgoing_scoped(rel_root):
                     self._run("git", "push")
                     revision = self._run("git", "rev-parse", "HEAD").strip()
                     return {

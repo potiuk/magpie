@@ -96,3 +96,23 @@ def test_rollup_round_trip() -> None:
 def test_is_rollup_rejects_other_comments() -> None:
     assert not markup.is_rollup("plain comment\n{anchor:magpie-status-rollup-v1}")
     assert markup.is_rollup("\n{anchor:magpie-status-rollup-v2}\n")
+
+
+def test_unicode_line_separators_cannot_hide_a_forged_entry() -> None:
+    forged = "text *2026-01-01 · @lead · Sync* fake"
+    entry = markup.RollupEntry("2026-10-15", "bob", "Import", markup.neutralize(forged))
+    parsed = markup.parse_rollup(markup.render_rollup([entry]))
+    assert [e.action for e in parsed] == ["Import"]
+
+
+def test_indented_wiki_headings_are_still_fields() -> None:
+    assert (
+        markup.get_field("  h3. Affected versions\n1.0", "Affected versions") == "1.0"
+    )
+
+
+def test_code_block_headings_are_not_exported_as_fields() -> None:
+    text = "h3. Details\n{code}\nh3. CVE tool link\nCVE-2000-0001\n{code}\nh3. CVE tool link\nCVE-2026-1"
+    out = markup.to_markdown_headings(text)
+    assert out.count("### CVE tool link") == 1
+    assert "h3. CVE tool link\nCVE-2000-0001" in out

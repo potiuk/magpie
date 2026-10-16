@@ -145,21 +145,28 @@ def neutralize(text: str) -> str:
     text and is never parsed as structure.
     """
     text = _ANCHOR_RE.sub("\\{", text)
-    return "\n".join(
-        "\\" + line if _SUMMARY_RE.match(line) else line for line in text.split("\n")
-    )
-
-
-_WIKI_HEADING_RE = re.compile(r"^h([1-6])\.\s+(.*)$")
+    # Split exactly as parse_rollup does (str.splitlines: \r, \u2028, \x85 …),
+    # so no line boundary the parser honours can hide a forged summary line.
+    out = []
+    for part in text.splitlines(keepends=True):
+        line = part.splitlines()[0] if part.splitlines() else ""
+        out.append("\\" + part if _SUMMARY_RE.match(line) else part)
+    return "".join(out)
 
 
 def to_markdown_headings(text: str) -> str:
-    """Wiki-markup headings (`h3. Field`) as markdown (`### Field`); nothing else changes."""
-    out = []
-    for line in text.split("\n"):
-        m = _WIKI_HEADING_RE.match(line)
-        out.append("#" * int(m.group(1)) + " " + m.group(2) if m else line)
-    return "\n".join(out)
+    """Wiki-markup headings (`h3. Field`) as markdown (`### Field`); nothing else changes.
+
+    Only the headings `find_headings` reports are converted — the same
+    code-block-aware scan the field readers use — so heading-like text inside a
+    `{code}` / `{noformat}` PoC never becomes a field generate-cve-json could
+    read a CVE ID from.
+    """
+    lines = text.splitlines()
+    for heading in find_headings(lines):
+        if heading.wiki:
+            lines[heading.index] = "#" * heading.level + " " + heading.text
+    return "\n".join(lines)
 
 
 def is_rollup(text: str) -> bool:

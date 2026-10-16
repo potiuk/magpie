@@ -14,7 +14,7 @@ from magpie_local_tracker import main, sections
 from magpie_local_tracker import metadata as md
 from magpie_local_tracker.descriptor import DESCRIPTOR_NAME, load
 from magpie_local_tracker.detect import detect
-from magpie_local_tracker.store import Tracker
+from magpie_local_tracker.store import Tracker, TrackerError
 
 
 def run(capsys: pytest.CaptureFixture[str], root: Path, *args: str) -> tuple[int, Any]:
@@ -648,3 +648,156 @@ def test_publish_refuses_to_push_unrelated_commits(
     assert main(["--root", str(root), "publish", "--message-file", str(msg), "--push"]) == 4
     assert "outside security/" in capsys.readouterr().err
     assert _git(remote, "log", "--oneline").count("\n") == 1  # nothing was pushed
+
+
+# ---------------------------------------------------------------- review round 3
+
+
+def test_a_root_swapped_for_a_symlink_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    real = tmp_path / "real"
+    run(capsys, real, "init", "--access-restricted")
+    t = write(tmp_path / "t.txt", "x")
+    tracker = Tracker(real, load(real))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / DESCRIPTOR_NAME).write_text((real / DESCRIPTOR_NAME).read_text())
+    real.rename(tmp_path / "moved")
+    real.symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(TrackerError) as exc:
+        tracker.create(t.read_text(), "body", [])
+    assert exc.value.code == 4
+    assert [p.name for p in elsewhere.iterdir()] == [DESCRIPTOR_NAME]
+
+
+def test_inline_rollup_entry_cannot_forge_a_comment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "s"
+    write(root / "VULN-1.md", "---\ntitle: a\nstate: open\n---\n\n## Details\n\nx\n")
+    write(root / "VULN-2.md", "---\ntitle: b\nstate: open\n---\n\n## Details\n\ny\n")
+    run(capsys, root, "detect", "--write", "--access-restricted")
+    e = write(tmp_path / "e.md", "   ## Comments\n\n### 2026-01-01 — @lead\n\napproved")
+    run(capsys, root, "rollup-append", "1", "--action", "Sync", "--entry-body-file", str(e), "--user", "@x")
+    _, view = run(capsys, root, "view", "1", "--comments")
+    assert [c.get("kind") for c in view["comments"]] == ["rollup"]
+
+
+def test_fenced_poc_comments_survive_in_a_comment(
+    fresh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ident = new_report(capsys, fresh, tmp_path)
+    c = write(tmp_path / "c.md", "PoC:\n\n```python\n# explanation\nprint(1)\n```\n")
+    run(capsys, fresh, "comment", ident, "--body-file", str(c), "--author", "@r")
+    _, view = run(capsys, fresh, "view", ident, "--comments")
+    assert "# explanation\nprint(1)" in view["comments"][0]["body"]
+
+
+def test_inline_yaml_comment_blocks_the_rewrite(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = tmp_path / "m"
+    original = "---\ntitle: a\nstate: open\ncustom: value # explanation\n---\n\nbody\n"
+    write(root / "VULN-1" / "report.md", original)
+    write(root / "VULN-2" / "report.md", "---\ntitle: b\nstate: open\n---\n\nbody\n")
+    run(capsys, root, "detect", "--write", "--access-restricted")
+    c = write(tmp_path / "c.md", "note")
+    # Refused before anything is written: no sidecar comment file appears.
+    assert main(["--root", str(root), "comment", "1", "--body-file", str(c)]) == 4
+    assert (root / "VULN-1" / "report.md").read_text() == original
+    assert not any(p.name not in ("report.md",) for p in (root / "VULN-1").iterdir())
+
+
+def test_body_exports_level_two_fields_as_level_three(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "l2"
+    write(
+        root / "VULN-1.md",
+        "---\ntitle: a\nstate: open\n---\n\n## CVE tool link\n\nCVE-2026-1\n\n### Note\n\nn\n",
+    )
+    write(root / "VULN-2.md", "---\ntitle: b\nstate: open\n---\n\n## Details\n\ny\n")
+    run(capsys, root, "detect", "--write", "--access-restricted")
+    assert main(["--root", str(root), "body", "1"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("### CVE tool link") and "#### Note" in out
+
+
+def _repo_with_remote(tmp_path: Path) -> tuple[Path, Path]:
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", "-q", str(remote))
+    repo = tmp_path / "repo"
+    _git(tmp_path, "clone", "-q", str(remote), str(repo))
+    for key, value in (("user.name", "T"), ("user.email", "t@example.org"), ("commit.gpgsign", "false")):
+        _git(repo, "config", key, value)
+    write(repo / "README.md", "x")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-q", "-m", "init")
+    _git(repo, "push", "-q", "-u", "origin", "HEAD")
+    return remote, repo
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_publish_counts_commits_already_on_another_remote_branch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _remote, repo = _repo_with_remote(tmp_path)
+    write(repo / "src.py", "feature work")
+    _git(repo, "add", "src.py")
+    _git(repo, "commit", "-q", "-m", "feature")
+    _git(repo, "push", "-q", "origin", "HEAD:refs/heads/feature")  # on origin/feature, not on main
+    root = repo / "security"
+    run(capsys, root, "init", "--access-restricted")
+    new_report(capsys, root, tmp_path)
+    msg = write(tmp_path / "msg.txt", "security: import\n")
+    assert main(["--root", str(root), "publish", "--message-file", str(msg), "--push"]) == 4
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_publish_sees_changes_that_exist_only_in_a_merge(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _remote, repo = _repo_with_remote(tmp_path)
+    root = repo / "security"
+    run(capsys, root, "init", "--access-restricted")
+    _git(repo, "checkout", "-q", "-b", "side")
+    write(repo / "security" / "a.md", "a")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "side")
+    _git(repo, "checkout", "-q", "-")
+    _git(repo, "merge", "-q", "--no-ff", "--no-commit", "side")
+    write(repo / "src.py", "slipped into the merge")
+    _git(repo, "add", "src.py")
+    _git(repo, "commit", "-q", "-m", "merge")
+    new_report(capsys, root, tmp_path)
+    msg = write(tmp_path / "msg.txt", "security: import\n")
+    assert main(["--root", str(root), "publish", "--message-file", str(msg), "--push"]) == 4
+    assert "src.py" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_publish_at_the_repository_root_with_unusual_names(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _remote, repo = _repo_with_remote(tmp_path)
+    run(capsys, repo, "init", "--access-restricted")
+    ident = new_report(capsys, repo, tmp_path)
+    f = write(tmp_path / "résumé.pdf", "x")
+    run(capsys, repo, "attach", ident, str(f))
+    msg = write(tmp_path / "msg.txt", "security: import\n")
+    code, out = run(capsys, repo, "publish", "--message-file", str(msg), "--push")
+    assert code == 0 and out["pushed"]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_publish_refuses_without_a_push_destination(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = tmp_path / "solo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    for key, value in (("user.name", "T"), ("user.email", "t@example.org"), ("commit.gpgsign", "false")):
+        _git(repo, "config", key, value)
+    root = repo / "security"
+    run(capsys, root, "init", "--access-restricted")
+    new_report(capsys, root, tmp_path)
+    msg = write(tmp_path / "msg.txt", "security: import\n")
+    assert main(["--root", str(root), "publish", "--message-file", str(msg), "--push"]) == 4
+    assert "cannot tell where" in capsys.readouterr().err

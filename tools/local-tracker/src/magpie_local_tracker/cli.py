@@ -257,6 +257,7 @@ def cmd_pending(args: argparse.Namespace) -> int:
             "vcs": wc.kind,
             "changes": changes,
             "unpushed_commits": unpushed,
+            "push_destination": wc.push_destination(),
             "needs_publish": bool(changes) or bool(unpushed),
         }
     )

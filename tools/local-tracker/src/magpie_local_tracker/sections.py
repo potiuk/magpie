@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 _HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<text>.+?)\s*#*\s*$")
@@ -26,6 +27,11 @@ def _headings(lines: list[str]) -> list[tuple[int, int, str]]:
         if m:
             out.append((idx, len(m.group("hashes")), m.group("text").strip()))
     return out
+
+
+def heading_lines(lines: list[str]) -> list[tuple[int, int, str]]:
+    """(line index, level, text) for every heading outside code fences."""
+    return _headings(lines)
 
 
 def find_section(body: str, heading: str, level: int | None = None) -> tuple[int, int, int] | None:
@@ -68,11 +74,19 @@ def neutralize(text: str, managed_headings: tuple[str, ...] = ()) -> str:
     if not managed_headings:
         return text
     managed = {h.lower() for h in managed_headings}
+    return escape_headings(text, lambda level, title: level <= 2 and title.strip().lower() in managed)
+
+
+def escape_headings(text: str, which: Callable[[int, str], bool] | None = None) -> str:
+    """Prefix heading lines with a backslash so they are never parsed as headings.
+
+    Only real headings are touched — the same fence-aware scan the parsers use —
+    so a ``# comment`` inside a fenced PoC stays exactly as the reporter wrote it.
+    """
     lines = text.split("\n")
-    for i, line in enumerate(lines):
-        m = _HEADING_RE.match(line)
-        if m and len(m.group("hashes")) <= 2 and m.group("text").strip().lower() in managed:
-            lines[i] = "\\" + line
+    for idx, level, title in _headings(lines):
+        if which is None or which(level, title):
+            lines[idx] = "\\" + lines[idx]
     return "\n".join(lines)
 
 
@@ -141,9 +155,7 @@ def render_comment(comment_id: int, author: str, date: str, body: str, level: in
     # Hand-written comments are recognised by their headings, so a heading
     # inside a comment body would read back as a comment by someone else:
     # escape every heading line in it, as well as the markers.
-    safe = "\n".join(
-        "\\" + ln if _HEADING_RE.match(ln) else ln for ln in neutralize(body.strip()).split("\n")
-    )
+    safe = escape_headings(neutralize(body.strip()))
     return (
         f"<!-- comment id={comment_id} author={author} date={date} -->\n"
         f"{'#' * level} {date[:10]} — {author}\n\n{safe}\n"
@@ -211,7 +223,12 @@ def rollup_marker(name: str) -> str:
 
 
 def render_entry(date: str, user: str, action: str, body: str) -> str:
-    trimmed = "\n".join(line.lstrip() for line in neutralize(body).strip("\n").split("\n"))
+    # Trim first, then escape: left-trimming must not expose a heading or a
+    # marker that the escaping did not see. Rollup entries, like comments, may
+    # sit inside the report (inline rollup section), so every heading outside
+    # fences is escaped too.
+    trimmed = "\n".join(line.lstrip() for line in body.strip("\n").split("\n"))
+    trimmed = escape_headings(neutralize(trimmed))
     return f"<details><summary>{date} · {user} · {action}</summary>\n\n{trimmed}\n\n</details>"
 
 

@@ -20,7 +20,7 @@ argument-hint: "[import] [last Nd|all] [skip threadId]"
 capability: capability:intake
 surface_hash: sha256:e9c563d494821baf
 license: Apache-2.0
-measured_tokens: 10038
+measured_tokens: 10088
 ---
 
 <!-- Placeholder convention (see AGENTS.md#placeholder-convention-used-in-skill-files):
@@ -161,7 +161,8 @@ Run the `tracker-doctor` vetted operation instead and stop on any failing check;
 
 **CVE JSON on another backend.** `generate-cve-json <N> --attach` reads and attaches through GitHub, so do not run it.
 Instead: save the body with the `issue-body` vetted operation (`vetted-op-read … --save cve-body issue-body <id>`),
-run `generate-cve-json --stdin --title "<issue title>" --output <workspace>/<CVE-ID>.json` on that saved file,
+run `generate-cve-json --stdin --title "<issue title>" --output <workspace>/<CVE-ID>.json` on that saved file —
+adding `--review` when the issue's labels (from `issue-view`) include the release-vote label or a forward-state label the generator's config names, since `--stdin` cannot see labels and would otherwise produce DRAFT —
 and attach the result with the `issue-attach` vetted operation (`<id> <workspace>/<CVE-ID>.json <CVE-ID>.json`).
 
 **Publish local tracker changes before ending.** With `local-files`, nothing reaches the team until it is committed.

@@ -7,8 +7,10 @@ from __future__ import annotations
 import contextlib
 import datetime as _dt
 import errno
+import fcntl
 import os
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -68,6 +70,10 @@ class Tracker:
         self.root = root
         self.desc = desc
         self.wc = wc or detect_vcs(root)
+        # Resolved once, here: every later open walks to it component by component
+        # and refuses a symlink anywhere, so swapping the root (or any folder above
+        # it) for a symlink afterwards cannot redirect a read or a write.
+        self._real_root = Path(os.path.realpath(root))
 
     # ------------------------------------------------------------ locating
 
@@ -199,7 +205,7 @@ class Tracker:
         if not parts or parts[0] == ".." or os.path.isabs(rel):
             raise refused(f"{path} is outside the tracker root {self.root}")
         dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        dir_fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        dir_fd = self._root_fd()
         try:
             for name in parts[:-1]:
                 try:
@@ -228,6 +234,45 @@ class Tracker:
         finally:
             os.close(dir_fd)
 
+    def _root_fd(self) -> int:
+        """A descriptor on the tracker root, reached from `/` with `O_NOFOLLOW`
+        on every component of the path resolved when the tracker was opened."""
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+        for part in self._real_root.parts[1:]:
+            try:
+                next_fd = os.open(part, flags, dir_fd=fd)
+            except OSError as exc:
+                os.close(fd)
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise refused(
+                        f"the tracker root {self._real_root} changed into a symlink; refusing"
+                    ) from exc
+                raise
+            os.close(fd)
+            fd = next_fd
+        return fd
+
+    @contextlib.contextmanager
+    def _allocation_lock(self) -> Iterator[None]:
+        """Serialize ID allocation across processes: exclusive creation alone
+        reserves a file name, and with title slugs two writers could otherwise
+        both take number N under different names."""
+        fd = self._root_fd()
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    def _require_rewritable(self, entry: Entry, meta: md.Metadata) -> None:
+        if meta.unsupported:
+            raise refused(
+                f"{entry.path}: its front matter uses {meta.unsupported}, which this tool cannot "
+                "rewrite without losing it; edit that report by hand, or simplify its front matter"
+            )
+
     def _read_file(self, path: Path) -> str:
         with os.fdopen(self._open(path, os.O_RDONLY), encoding="utf-8") as handle:
             return handle.read()
@@ -248,11 +293,7 @@ class Tracker:
         return meta, body
 
     def _write(self, entry: Entry, meta: md.Metadata, body: str) -> None:
-        if meta.unsupported:
-            raise refused(
-                f"{entry.path}: its front matter uses {meta.unsupported}, which this tool cannot "
-                "rewrite without losing it; edit that report by hand, or simplify its front matter"
-            )
+        self._require_rewritable(entry, meta)
         key = self.desc.keys.get("updated", "")
         if key and (key in meta.values or meta.style != "none"):
             meta.values[key] = _today()
@@ -431,6 +472,10 @@ class Tracker:
         title = " ".join(title.split())
         if not title:
             raise TrackerError("the title file is empty", 2)
+        with self._allocation_lock():
+            return self._create_locked(title, body, labels, author)
+
+    def _create_locked(self, title: str, body: str, labels: list[str], author: str) -> dict[str, object]:
         # Numbering continues the prefix new reports get (``2026-`` next to an
         # older ``2025-`` series starts from the 2026 series' own maximum).
         number = max((e.number for e in self.entries() if e.prefix == self.desc.id.prefix), default=0) + 1
@@ -531,6 +576,9 @@ class Tracker:
         self.require_writable()
         entry = self.resolve(ident)
         meta, text = self._read(entry)
+        # Checked before anything is written: a sidecar comment must not land
+        # while the report's own update is then refused.
+        self._require_rewritable(entry, meta)
         existing = self._comments_text(entry, text)
         cid = sections.next_comment_id(existing)
         level = 3 if self.desc.comments_mode == "section" else 2
@@ -611,6 +659,7 @@ class Tracker:
         self.require_writable()
         entry = self.resolve(ident)
         existing, meta, text = self._read_rollup(entry)
+        self._require_rewritable(entry, meta)
         entry_text = sections.render_entry(now[:10], user, action, body)
         self._write_rollup(
             entry, meta, text, sections.rollup_append(existing, self._rollup_name(), entry_text)
@@ -621,6 +670,7 @@ class Tracker:
         self.require_writable()
         entry = self.resolve(ident)
         existing, meta, text = self._read_rollup(entry)
+        self._require_rewritable(entry, meta)
         amended = sections.rollup_amend_latest(existing or "", action, body)
         if amended is None:
             raise refused(
@@ -638,6 +688,15 @@ class Tracker:
         entry = self.resolve(ident)
         _, text = self._read(entry)
         main, _ = self._split_managed(text)
+        level = self.desc.field_heading_level
+        if level != 3:
+            # generate-cve-json reads `### Field` sections only: shift the
+            # tracker's field level (and anything nested under it) to match.
+            lines = main.split("\n")
+            for idx, lvl, title in sections.heading_lines(lines):
+                if lvl >= level:
+                    lines[idx] = "#" * min(6, 3 + lvl - level) + " " + title
+            main = "\n".join(lines)
         return main.strip("\n") + "\n"
 
     def attach(self, ident: str, content: bytes, name: str) -> dict[str, object]:
