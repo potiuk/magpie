@@ -30,9 +30,11 @@ on:  # yamllint disable-line rule:truthy
   pull_request:
     paths:
       - "tools/agent-isolation/claude-settings.template.json"
-      # Not tracked any more (#1639), so a change here means someone
-      # committed it again; the job must run to refuse that.
+      # Never tracked (#1639; the local file was never meant to be), so
+      # a change here means someone committed one; the job must run to
+      # refuse it.
       - ".claude/settings.json"
+      - ".claude/settings.local.json"
       - ".gemini/**"
       - "tools/sandbox-lint/**"
       - ".github/workflows/sandbox-lint.yml"
@@ -40,9 +42,11 @@ on:  # yamllint disable-line rule:truthy
     branches: [main]
     paths:
       - "tools/agent-isolation/claude-settings.template.json"
-      # Not tracked any more (#1639), so a change here means someone
-      # committed it again; the job must run to refuse that.
+      # Never tracked (#1639; the local file was never meant to be), so
+      # a change here means someone committed one; the job must run to
+      # refuse it.
       - ".claude/settings.json"
+      - ".claude/settings.local.json"
       - ".gemini/**"
       - "tools/sandbox-lint/**"
       - ".github/workflows/sandbox-lint.yml"
@@ -89,16 +93,21 @@ jobs:
       # repo root, which is what the linter expects so
       # `tools/agent-isolation/claude-settings.template.json` and `tools/sandbox-lint/expected.json`
       # resolve relative to cwd.
-      # A committed `.claude/settings.json` is loaded by Claude Code for
-      # everyone who checks the repository out, and it is no longer what
-      # CI lints: the baseline lives in the template. Refuse it outright,
-      # so it cannot weaken the sandbox around the linted template.
-      - name: Refuse a committed .claude/settings.json
+      # A committed `.claude/settings.json` or `.claude/settings.local.json`
+      # is loaded by Claude Code for everyone who checks the repository
+      # out, and neither is what CI lints: the baseline lives in the
+      # template. Refuse both outright, so neither can weaken the sandbox
+      # around the linted template.
+      - name: Refuse committed Claude Code settings
         run: |
-          if git ls-files --error-unmatch .claude/settings.json >/dev/null 2>&1; then
-            echo "::error file=.claude/settings.json::.claude/settings.json is each contributor's own copy and must not be committed (#1639). Change tools/agent-isolation/claude-settings.template.json and tools/sandbox-lint/expected.json instead, and remove the file with 'git rm --cached .claude/settings.json'."
-            exit 1
-          fi
+          status=0
+          for f in .claude/settings.json .claude/settings.local.json; do
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "::error file=$f::$f is each contributor's own file and must not be committed (#1639). Change tools/agent-isolation/claude-settings.template.json and tools/sandbox-lint/expected.json instead, and remove it with 'git rm --cached $f'."
+              status=1
+            fi
+          done
+          exit "$status"
       - name: Run sandbox-lint
         run: uv run sandbox-lint
       - name: Check Gemini sandbox and policy profile
