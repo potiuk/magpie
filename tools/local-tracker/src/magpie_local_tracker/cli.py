@@ -63,6 +63,8 @@ def _tracker(args: argparse.Namespace) -> Tracker:
         desc = load(root)
     except FileNotFoundError as exc:
         raise TrackerError(str(exc), 3) from exc
+    except ValueError as exc:
+        raise TrackerError(f"invalid tracker descriptor: {exc}", 5) from exc
     return Tracker(root, desc)
 
 
@@ -233,7 +235,16 @@ def cmd_pending(args: argparse.Namespace) -> int:
     root = _root(args)
     wc = detect_vcs(root)
     changes = wc.status(root) if root.exists() else []
-    _emit({"backend": "local-files", "vcs": wc.kind, "changes": changes, "needs_publish": bool(changes)})
+    unpushed = wc.unpushed()
+    _emit(
+        {
+            "backend": "local-files",
+            "vcs": wc.kind,
+            "changes": changes,
+            "unpushed_commits": unpushed,
+            "needs_publish": bool(changes) or bool(unpushed),
+        }
+    )
     return 0
 
 

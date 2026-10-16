@@ -18,7 +18,7 @@ when_to_use: |
 capability: capability:stats
 surface_hash: sha256:779340f8eb985eeb
 license: Apache-2.0
-measured_tokens: 4232
+measured_tokens: 4414
 ---
 
 <!-- SPDX-License-Identifier: Apache-2.0
@@ -132,17 +132,23 @@ With `github`, every recipe below runs as written.
 With `local-files` or `jira`, never run a `gh` command against `<tracker>`:
 look the command up in the [skill-command → vetted-operation table](../../../../tools/security-tracker/contract.md#from-skill-commands-to-vetted-operations)
 and run that vetted operation instead — `vetted-op-read` for reads, `vetted-op-tracker` for the rollup, body-field and publish operations, `vetted-op` for the other writes.
-Vetted-ops translates it for the configured backend; `<tracker>` issue numbers become the backend's IDs, and the returned `url` is the link.
+Vetted-ops translates it for the configured backend; issue numbers become the backend's IDs (`SEC-0012`, `FOOSEC-12`), and the returned `url` is the link.
 Operations on `<upstream>` (PRs, code search) do not change.
 A refusal — the backend's confidentiality guard, or an operation the backend does not have — stops the step: report it, never route around it.
 
+**Pre-flight on another backend.** The GitHub checks in Step 0 — `gh api repos/<tracker>` access, the collaborator roster, project-board ids — do not apply.
+Run the `tracker-doctor` vetted operation instead and stop on any failing check; take the security-team roster from `<project-config>/release-trains.md`, and treat the project board as disabled.
+
 **Publish local tracker changes before ending.** With `local-files`, nothing reaches the team until it is committed.
-If this run wrote to the tracker, run the `tracker-pending` vetted operation as the last step, show the changed files,
+If this run wrote to the tracker, run the `tracker-pending` vetted operation as the last step, show the changed files and any unpushed commits,
 draft a commit message naming the trackers and the action, ending with the project's commit-attribution trailer, and ask.
 Only on the user's confirmation run `tracker-publish` with that message file
 (Git: commit the tracker folder and push; SVN: commit, which publishes).
 
 <!-- END MAGPIE BLOCK: tracker-backend -->
+
+**This skill is GitHub-only today.** Its fetch pipeline (`run.sh` and the scripts it runs) reads `<tracker>` with `gh` directly, so the vetted-operation translation above does not reach it.
+With `tracker.platform` set to `local-files` or `jira`, stop before fetching anything and tell the user the dashboard does not support that backend yet; never point the pipeline at a GitHub repository instead.
 
 *Renderer* configuration (bucket granularity, milestones, categories, scope labels, triage keywords, …) lives in a separate YAML file at
 `.apache-magpie-overrides/security-tracker-stats.yaml` (path set by `tracker_stats_config:` in

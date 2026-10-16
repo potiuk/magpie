@@ -251,6 +251,16 @@ def _label_text(value: str, what: str, forbidden: str) -> str:
     return value
 
 
+_TRACKER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$")
+
+
+def tracker_id(value: str) -> str:
+    """An issue ID on a non-GitHub security tracker: ``SEC-0012``, ``FOOSEC-12``,
+    ``2024-007-xss-in-login``, or a bare number. Letters, digits, ``-`` and ``_``
+    only — no ``.`` or ``/``, so it can never name a path outside the tracker."""
+    return _check(_TRACKER_ID, value, "tracker issue id")
+
+
 _QUERY_MAX = 200
 
 
@@ -1051,6 +1061,18 @@ def _not_on_github(op: str, reason: str) -> Callable[..., list[str]]:
 
     return _build
 
+
+_register(
+    Op(
+        name="tracker-doctor",
+        params=(),
+        backend="tracker-cli",
+        summary="Check the non-GitHub security tracker's setup (local-files or jira).",
+        build=_not_on_github(
+            "tracker-doctor", "check it with `gh api repos/<tracker> --jq .name` and the collaborator roster"
+        ),
+    )
+)
 
 _register(
     Op(

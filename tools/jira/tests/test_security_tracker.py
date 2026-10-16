@@ -186,7 +186,7 @@ def test_list_jql(run: Run, fake: FakeJira) -> None:
     assert result.code == 0
     query = fake.calls[0].query
     assert query["jql"] == (
-        'project = "FOOSEC" AND resolution is not EMPTY AND labels = "cve allocated" AND labels = "x"'
+        'project = "FOOSEC" AND (resolution is not EMPTY OR statusCategory = Done) AND labels = "cve allocated" AND labels = "x"'
         ' AND text ~ "say \\"hi\\"\\\\" ORDER BY updated DESC'
     )
     assert result.json() == [
@@ -211,7 +211,7 @@ def test_list_defaults_open_and_limit(run: Run, fake: FakeJira) -> None:
     assert len(result.json()) == 3
     assert (
         fake.calls[0].query["jql"]
-        == 'project = "FOOSEC" AND resolution is EMPTY ORDER BY updated DESC'
+        == 'project = "FOOSEC" AND resolution is EMPTY AND statusCategory != Done ORDER BY updated DESC'
     )
     assert fake.calls[0].query["maxResults"] == "3"
 

@@ -194,10 +194,11 @@ def op_view(client: JiraClient, cfg: Config, args: argparse.Namespace) -> Any:
 
 def op_list(client: JiraClient, cfg: Config, args: argparse.Namespace) -> Any:
     clauses = [f"project = {jql_quote(cfg.project)}"]
+    # The same definition as _state(): closed is resolved *or* in the Done category.
     if args.state == "open":
-        clauses.append("resolution is EMPTY")
+        clauses.append("resolution is EMPTY AND statusCategory != Done")
     elif args.state == "closed":
-        clauses.append("resolution is not EMPTY")
+        clauses.append("(resolution is not EMPTY OR statusCategory = Done)")
     clauses.extend(f"labels = {jql_quote(label)}" for label in args.label or [])
     if args.search:
         clauses.append(f"text ~ {jql_quote(args.search)}")

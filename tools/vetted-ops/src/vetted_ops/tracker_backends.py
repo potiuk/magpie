@@ -26,9 +26,13 @@ tracker is translated into a call of that backend's CLI —
 
 The translation keeps every property the ``gh`` builders have:
 
-* The executable and the backend's script name are fixed here; the policy
-  supplies only the backend's project directory and its pinned settings (the
-  tracker folder, or the Jira URL, project and security level), never a command.
+* The executable, the backend's script name and the backend's code are fixed
+  here: the backend runs from the tool directory installed beside vetted-ops
+  itself (``tools/<dir>`` in a checkout, ``<install-root>/<dir>`` for the
+  installed copy), never from a directory a policy names. A policy file can be
+  chosen with ``--config``, so letting it name code would let whoever writes a
+  policy run code through the allowlisted read entry point. The policy supplies
+  only data: the tracker folder, or the Jira URL, project and security level.
   A caller cannot point an operation at another folder or another Jira project.
 * Parameters arrive already validated by the dispatcher, are placed as single
   argv elements, and run without a shell. Free-text values (titles, search
@@ -45,6 +49,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from .ops import ParamError
 
@@ -55,6 +60,16 @@ BACKEND_SCRIPTS = {
     "local-files": ("local-tracker", "magpie-local-tracker"),
     "jira": ("jira", "magpie-jira-tracker"),
 }
+
+
+def backend_dir(platform: str) -> Path:
+    """The trusted backend tool directory for ``platform``, beside this package.
+
+    ``.../vetted-ops/src/vetted_ops/tracker_backends.py`` → ``.../<dir>``: the
+    repository's ``tools/<dir>``, or the installed copy's sibling.
+    """
+    tool_dir, _ = BACKEND_SCRIPTS[platform]
+    return Path(__file__).resolve().parents[3] / tool_dir
 
 
 @dataclass(frozen=True)
@@ -145,6 +160,7 @@ TRANSLATIONS: dict[str, Translate] = {
     ],
     "body-field-get": lambda p: ["field-get", p["number"], p["field"]],
     "body-field-set": lambda p: ["field-set", p["number"], p["field"], "--value-file", "-"],
+    "tracker-doctor": lambda p: ["doctor"],
     "tracker-pending": lambda p: ["pending"],
     "tracker-publish": lambda p: ["publish", "--message-file", "-", "--push"],
 }
@@ -164,6 +180,7 @@ NOT_ON_BACKEND: dict[str, str] = {
 
 #: Operations that only exist for a working-copy or non-GitHub backend.
 GITHUB_NOT_APPLICABLE = {
+    "tracker-doctor": "check the GitHub tracker with `gh api repos/<tracker> --jq .name` and the collaborator roster",
     "tracker-pending": "GitHub tracker writes are visible as soon as they return; there is nothing pending",
     "tracker-publish": "GitHub tracker writes are visible as soon as they return; there is nothing to publish",
 }

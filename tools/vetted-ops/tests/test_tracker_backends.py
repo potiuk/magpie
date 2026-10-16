@@ -56,14 +56,12 @@ close_reasons = ["completed", "not planned"]
 LOCAL = """
 [tracker]
 platform = "local-files"
-project = "{project}"
 root = "{root}"
 """
 
 JIRA = """
 [tracker]
 platform = "jira"
-project = "{project}"
 jira_url = "https://issues.example.org/jira"
 jira_project = "FOOSEC"
 jira_security_level = "Security Team"
@@ -81,14 +79,12 @@ def _write_policy(tmp_path: Path, tracker: str, **fmt: str) -> Path:
 
 @pytest.fixture()
 def local_policy(tmp_path: Path) -> Path:
-    return _write_policy(
-        tmp_path, LOCAL, project=str(REPO_TOOLS / "local-tracker"), root=str(tmp_path / "reports")
-    )
+    return _write_policy(tmp_path, LOCAL, root=str(tmp_path / "reports"))
 
 
 @pytest.fixture()
 def jira_policy(tmp_path: Path) -> Path:
-    return _write_policy(tmp_path, JIRA, project=str(REPO_TOOLS / "jira"))
+    return _write_policy(tmp_path, JIRA)
 
 
 def _body(policy: Path, text: str = "hello\n") -> str:
@@ -160,12 +156,17 @@ def test_every_operation_that_addresses_the_tracker_is_mapped(tmp_path: Path) ->
     ("tracker", "fmt", "message"),
     [
         ('[tracker]\nplatform = "svn"\n', {}, "platform must be one of"),
-        (LOCAL, {"project": "tools/local-tracker", "root": "/r"}, "must be absolute"),
-        (LOCAL, {"project": "/usr/bin", "root": "/r"}, "tools/local-tracker directory"),
-        (LOCAL, {"project": "/x/local-tracker", "root": "reports"}, "must be absolute"),
-        (JIRA.replace("https://", "http://"), {"project": "/x/jira"}, "https://"),
-        (JIRA.replace('"FOOSEC"', '"foo sec"'), {"project": "/x/jira"}, "project key"),
-        (JIRA.replace('"Security Team"', '"-x"'), {"project": "/x/jira"}, "one line"),
+        (LOCAL, {"root": "reports"}, "must be absolute"),
+        (
+            LOCAL.replace(
+                'platform = "local-files"', 'platform = "local-files"\nproject = "/tmp/evil/local-tracker"'
+            ),
+            {"root": "/r"},
+            "no longer takes 'project'",
+        ),
+        (JIRA.replace("https://", "http://"), {}, "https://"),
+        (JIRA.replace('"FOOSEC"', '"foo sec"'), {}, "project key"),
+        (JIRA.replace('"Security Team"', '"-x"'), {}, "one line"),
     ],
 )
 def test_bad_tracker_policy_is_refused(
@@ -215,6 +216,7 @@ EXPECTED_LOCAL = {
     "rollup-amend-latest": ["rollup-amend-latest", "7", "--action", "Sync", "--entry-body-file", "-"],
     "body-field-get": ["field-get", "7", "Affected versions"],
     "body-field-set": ["field-set", "7", "Affected versions", "--value-file", "-"],
+    "tracker-doctor": ["doctor"],
     "tracker-pending": ["pending"],
     "tracker-publish": ["publish", "--message-file", "-", "--push"],
 }
@@ -415,3 +417,69 @@ def test_end_to_end_against_the_local_tracker(local_policy: Path, capfd: pytest.
     assert view["labels"] == ["needs triage"] and view["state"] == "closed"
     assert "1.0 to 1.2" in view["body"]
     assert (root / "SEC-0001" / "status-rollup.md").read_text().count("· Sync</summary>") == 1
+
+
+# --- review fixes -------------------------------------------------------------
+
+
+def test_backend_code_comes_from_beside_vetted_ops_not_from_the_policy() -> None:
+    """An agent-written --config can name a target, never code to run."""
+    assert tracker_backends.backend_dir("local-files") == REPO_TOOLS / "local-tracker"
+    assert tracker_backends.backend_dir("jira") == REPO_TOOLS / "jira"
+
+
+def test_backend_ids_pass_for_tracker_ops_only(
+    local_policy: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for ident in ("SEC-0001", "2024-007-xss-in-login", "12"):
+        code = cli.main(
+            [
+                "--config",
+                str(local_policy),
+                "--caller",
+                "security-issue-sync",
+                "--dry-run",
+                "issue-view",
+                ident,
+            ]
+        )
+        assert code == cli.EXIT_OK, ident
+        assert capsys.readouterr().out.rstrip().endswith(f"view {ident}")
+    for hostile in ("../etc", "a/b", "SEC.1"):
+        code = cli.main(
+            [
+                "--config",
+                str(local_policy),
+                "--caller",
+                "security-issue-sync",
+                "--dry-run",
+                "issue-view",
+                hostile,
+            ]
+        )
+        assert code == cli.EXIT_POLICY, hostile
+
+
+def test_save_works_for_translated_reads(local_policy: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(argv: list[str], check: bool, input: bytes, stdout: int | None = None) -> Any:
+        return subprocess.CompletedProcess(argv, 0, stdout=b'{"id": "SEC-0001"}')
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    saved_dir = local_policy.parent / "scratch" / "saved"
+    saved_dir.mkdir(mode=0o700)
+    (saved_dir / ".vetted-ops-save").write_text("")
+    code = cli.main(
+        [
+            "--config",
+            str(local_policy),
+            "--caller",
+            "security-issue-sync",
+            "--save",
+            "view",
+            "issue-view",
+            "1",
+        ]
+    )
+    assert code == cli.EXIT_OK
+    saved = saved_dir / "view"
+    assert json.loads(saved.read_text()) == {"id": "SEC-0001"}

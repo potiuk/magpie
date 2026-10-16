@@ -334,3 +334,135 @@ def test_publish_svn(
 
 def test_descriptor_file_name() -> None:
     assert DESCRIPTOR_NAME == ".magpie-tracker.json"
+
+
+# ---------------------------------------------------------------- review fixes
+
+
+def test_writes_refuse_symlinks_out_of_the_tracker(
+    fresh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ident = new_report(capsys, fresh, tmp_path)
+    outside = write(tmp_path / "outside.md", "### Affected versions\n\nkeep\n")
+    issue = fresh / ident / "issue.md"
+    issue.unlink()
+    issue.symlink_to(outside)
+    v = write(tmp_path / "v.md", "pwned")
+    # The symlinked entry is not even listed, so it cannot be addressed.
+    assert main(["--root", str(fresh), "field-set", ident, "Affected versions", "--value-file", str(v)]) == 3
+    assert outside.read_text() == "### Affected versions\n\nkeep\n"
+
+
+def test_symlinked_comments_file_is_refused(
+    fresh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ident = new_report(capsys, fresh, tmp_path)
+    outside = write(tmp_path / "outside.txt", "secret")
+    (fresh / ident / "comments.md").symlink_to(outside)
+    c = write(tmp_path / "c.md", "hi")
+    assert main(["--root", str(fresh), "comment", ident, "--body-file", str(c)]) == 4
+    assert outside.read_text() == "secret"
+
+
+def test_descriptor_names_cannot_escape(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = tmp_path / "t"
+    run(capsys, root, "init", "--access-restricted")
+    data = json.loads((root / DESCRIPTOR_NAME).read_text())
+    data["comments_file"] = "../../evil.md"
+    (root / DESCRIPTOR_NAME).write_text(json.dumps(data))
+    assert main(["--root", str(root), "list"]) == 5
+    assert "plain file or folder name" in capsys.readouterr().err
+
+
+def test_rollup_with_a_spaced_name_is_appended_not_replaced() -> None:
+    old = "<!-- Security Reports status rollup v1 — x -->\n" + sections.render_entry(
+        "2026-01-01", "@a", "Import", "a"
+    )
+    new = sections.rollup_append(
+        old, "security-tracker", sections.render_entry("2026-01-02", "@b", "Sync", "b")
+    )
+    assert new.count("<details>") == 2 and new.startswith("<!-- Security Reports")
+
+
+def test_metadata_free_report_gets_metadata_on_first_write(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "r"
+    write(root / "VULN-1.md", "# Old report\n\n## Details\n\nx\n")
+    write(root / "VULN-2.md", "# Other\n\n## Details\n\ny\n")
+    run(capsys, root, "detect", "--write", "--access-restricted")
+    run(capsys, root, "edit", "1", "--add-label", "needs triage")
+    run(capsys, root, "close", "1")
+    _, view = run(capsys, root, "view", "1")
+    assert view["labels"] == ["needs triage"] and view["state"] == "closed"
+    assert (root / "VULN-1.md").read_text().startswith("# Old report\n\n**")
+
+
+def test_view_comments_includes_the_rollup_first(
+    fresh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ident = new_report(capsys, fresh, tmp_path)
+    e = write(tmp_path / "e.md", "<!-- processed: 123 -->")
+    run(
+        capsys, fresh, "rollup-append", ident, "--action", "Sync", "--entry-body-file", str(e), "--user", "@x"
+    )
+    c = write(tmp_path / "c.md", "human note")
+    run(capsys, fresh, "comment", ident, "--body-file", str(c), "--author", "@y")
+    _, view = run(capsys, fresh, "view", ident, "--comments")
+    assert view["comments"][0]["kind"] == "rollup" and "processed: 123" in view["comments"][0]["body"]
+    assert view["comments"][1]["author"] == "@y"
+
+
+def test_every_prefix_in_use_stays_visible(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = tmp_path / "y"
+    for name in ("2025-001", "2026-001", "2026-002"):
+        write(root / f"{name}.md", f"---\ntitle: {name}\nstate: open\n---\n\nbody\n")
+    run(capsys, root, "detect", "--write", "--access-restricted")
+    _, listed = run(capsys, root, "list")
+    assert {x["id"] for x in listed} == {"2025-001", "2026-001", "2026-002"}
+    assert main(["--root", str(root), "view", "1"]) == 2  # ambiguous bare number
+    capsys.readouterr()
+    t = write(tmp_path / "t.txt", "new")
+    _, out = run(capsys, root, "create", "--title-file", str(t), "--body-file", str(t))
+    assert out["id"] == "2026-003"
+
+
+def test_backslashes_round_trip() -> None:
+    meta = md.Metadata(values={"title": 'C:\\upload "x"'})
+    text = md.render(meta, "b\n")
+    for _ in range(3):
+        meta, body = md.split(text)
+        text = md.render(meta, body)
+    assert meta.values["title"] == 'C:\\upload "x"'
+
+
+def test_field_set_keeps_blank_lines_inside_other_sections() -> None:
+    poc = "### PoC\n\n```\nline1\n\n\n\nline2\n```\n\n### Affected versions\n\nold\n"
+    new, _ = sections.set_field(poc, "Affected versions", "new", 3)
+    assert "line1\n\n\n\nline2" in new and new.endswith("### Affected versions\n\nnew\n")
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_publish_pushes_commits_left_unpushed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", "-q", str(remote))
+    repo = tmp_path / "repo"
+    _git(tmp_path, "clone", "-q", str(remote), str(repo))
+    for key, value in (("user.name", "T"), ("user.email", "t@example.org"), ("commit.gpgsign", "false")):
+        _git(repo, "config", key, value)
+    write(repo / "README.md", "x")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-q", "-m", "init")
+    _git(repo, "push", "-q", "-u", "origin", "HEAD")
+    root = repo / "security"
+    run(capsys, root, "init", "--access-restricted")
+    new_report(capsys, root, tmp_path)
+    msg = write(tmp_path / "msg.txt", "security: import\n")
+    # Commit without pushing, as a publish whose push failed would leave it.
+    _, out = run(capsys, root, "publish", "--message-file", str(msg))
+    assert out["committed"] and not out["pushed"]
+    _, pending = run(capsys, root, "pending")
+    assert pending["unpushed_commits"] == 1 and pending["needs_publish"]
+    _, out = run(capsys, root, "publish", "--message-file", str(msg), "--push")
+    assert out["pushed"] and not out["committed"]
+    assert run(capsys, root, "pending")[1]["unpushed_commits"] == 0

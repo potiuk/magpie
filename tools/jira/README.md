@@ -305,7 +305,7 @@ Under vetted-ops the URL, project and level are pinned by the policy's `[tracker
 |---|---|
 | IDs | `FOOSEC-12`, or a bare `12` expanded with the project key. |
 | `view` | `closed` when resolved or the status category is *Done*; `milestone` is the first fix version; adds `security_level` and `warnings` (one when the issue has no level). |
-| `list` | JQL `project = KEY`, resolution filter, one `labels = "L"` per label, `text ~ "…"` for `--search`, newest first. |
+| `list` | JQL `project = KEY`, the same open / closed rule as `view` (resolution or *Done* category), one `labels = "L"` per label, `text ~ "…"` for `--search`, newest first. |
 | `labels` | Distinct labels across the project (at most 5000 issues scanned). |
 | `create` / `edit` | `summary`, `description`, `labels`, `issuetype`, `security`; labels via `update.labels`, milestone via `fixVersions`, one assignee. |
 | `comment` | `--author` is echoed but Jira records the authenticated user. |

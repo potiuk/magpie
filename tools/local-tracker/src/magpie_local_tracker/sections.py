@@ -52,35 +52,44 @@ def get_field(body: str, heading: str) -> str | None:
     return "\n".join(body.split("\n")[start:end]).strip("\n")
 
 
+def _join(before: list[str], middle: list[str], after: list[str]) -> str:
+    """Join three line runs with one blank line at each seam.
+
+    Only the blank lines *at the seams* are normalised. Everything inside
+    `before` and `after` — fenced PoCs, payloads whose blank lines matter — is
+    kept verbatim.
+    """
+    while before and before[-1].strip() == "":
+        before = before[:-1]
+    while after and after[0].strip() == "":
+        after = after[1:]
+    out = [*before, "", *middle] if before else list(middle)
+    if after:
+        out += ["", *after]
+    text = "\n".join(out)
+    return text.rstrip("\n") + "\n"
+
+
 def set_field(body: str, heading: str, value: str, level: int) -> tuple[str, bool]:
     """Replace a section's content, or append the section. Returns (body, created)."""
     lines = body.split("\n")
     found = find_section(body, heading)
-    content = ["", value.strip("\n"), ""]
+    value_lines = value.strip("\n").split("\n")
     if found:
-        _, start, end = found
-        new = lines[:start] + content + lines[end:]
-        return _tidy("\n".join(new)), False
-    insert_at = len(lines)
-    new = [*lines[:insert_at], "", "#" * level + " " + heading, *content]
-    return _tidy("\n".join(new)), True
+        idx, _start, end = found
+        return _join(lines[: idx + 1], value_lines, lines[end:]), False
+    return _join(lines, ["#" * level + " " + heading, "", *value_lines], []), True
 
 
 def append_to_section(body: str, heading: str, level: int, text: str) -> str:
     """Append ``text`` at the end of a section, creating it at the end of the body."""
     lines = body.split("\n")
     found = find_section(body, heading, level)
+    text_lines = text.strip("\n").split("\n")
     if found:
         _, _, end = found
-        new = [*lines[:end], "", text.strip("\n"), "", *lines[end:]]
-    else:
-        new = [*lines, "", "#" * level + " " + heading, "", text.strip("\n"), ""]
-    return _tidy("\n".join(new))
-
-
-def _tidy(text: str) -> str:
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip("\n") + "\n"
+        return _join(lines[:end], text_lines, lines[end:])
+    return _join(lines, ["#" * level + " " + heading, "", *text_lines], [])
 
 
 # ---------------------------------------------------------------- comments
@@ -151,7 +160,9 @@ def next_comment_id(text: str) -> int:
 
 # ---------------------------------------------------------------- rollup
 
-ROLLUP_MARKER_RE = re.compile(r"<!-- (?P<name>\S+) status rollup v(?P<v>\d+)")
+# Any name: a rollup written under a name with spaces must still be found,
+# or the next append would start a new rollup and lose the history.
+ROLLUP_MARKER_RE = re.compile(r"<!-- (?P<name>[^\n]*?) status rollup v(?P<v>\d+)")
 _SUMMARY_RE = re.compile(r"^<details><summary>(?P<summary>.*)</summary>\s*$")
 
 

@@ -42,8 +42,9 @@ contract — they stay on the project's forge.
 
 The two non-GitHub backends expose **the same subcommand surface and the same
 JSON output**, defined [below](#operations).
-The vetted-ops policy pins the backend's tool directory and target (the tracker
-folder, or the Jira URL, project and security level); a skill cannot name either.
+The vetted-ops policy pins the target (the tracker folder, or the Jira URL,
+project and security level); the backend's code runs from the tool installed
+beside vetted-ops, never from a path a policy names. A skill can name neither.
 
 ## From skill commands to vetted operations
 
@@ -79,6 +80,7 @@ The last two columns are what vetted-ops runs on a non-GitHub tracker.
 | `vetted-op-tracker rollup-amend-latest` | `rollup-amend-latest N A F` | `rollup-amend-latest N --action A --entry-body-file -` |
 | `vetted-op-read body-field-get` | `body-field-get N FIELD` | `field-get N FIELD` |
 | `vetted-op-tracker body-field-set` | `body-field-set N FIELD F` | `field-set N FIELD --value-file -` |
+| `gh api repos/<tracker> --jq .name` (Step 0 access check) | `tracker-doctor` | `doctor` |
 | — (end of a session) | `tracker-pending` | `pending` (`local-files` only) |
 | — (end of a session) | `tracker-publish F` | `publish --message-file - --push` (`local-files` only) |
 
@@ -111,7 +113,7 @@ These are the backend CLIs' subcommands — what the vetted operations above run
 
 | Operation | Arguments | Output | Reached from |
 |---|---|---|---|
-| `view <id>` | `--comments` | `{id, title, state, labels, assignees, milestone, author, created, updated, body, url, comments?}` | `issue-view`, `issue-comments` |
+| `view <id>` | `--comments` | `{id, title, state, labels, assignees, milestone, author, created, updated, body, url, comments?}`; with `--comments` the status rollup is the first comment (`kind: "rollup"`), as on GitHub | `issue-view`, `issue-comments` |
 | `list` | `--state open\|closed\|all` (default `open`), `--label L` (repeatable, AND), `--search TEXT`, `--limit N` | `[{id, title, state, labels, updated, url}]` | `issue-list`, `issue-list-label`, `issue-search` |
 | `labels` | — | `["<label>", …]` (labels in use) | `label-list` |
 | `field-get <id> <heading>` | — | `{id, heading, value}` (`value` is `null` when the section is missing) | `body-field-get` |
@@ -124,7 +126,7 @@ These are the backend CLIs' subcommands — what the vetted operations above run
 | `rollup-append <id>` | `--action A`, `--entry-body-file F`, `--user U`, `--now ISO8601` | `{id, url}` | `rollup-append` |
 | `rollup-amend-latest <id>` | `--action A`, `--entry-body-file F` | `{id, url}`; exit 4 when the latest entry's action is not `A` | `rollup-amend-latest` |
 | `attach <id> <file>` | `--name N` | `{id, name, url}` | direct (no vetted operation yet) |
-| `pending` | — | `{backend, changes: [...], needs_publish: bool}` | `tracker-pending` |
+| `pending` | — | `{backend, changes: [...], unpushed_commits, needs_publish: bool}` | `tracker-pending` |
 | `publish` | `--message-file F`, `--trailer T` (repeatable), `--push` | `{committed, pushed, revision}` | `tracker-publish` |
 | `doctor` | — | `{backend, ok, checks: [{name, ok, detail}]}` | direct, from `/magpie-setup config` |
 

@@ -43,11 +43,27 @@ class Metadata:
         return None
 
 
+def _unescape_double(inner: str) -> str:
+    """Undo exactly what `_quote` does: `\\\\` -> `\\`, `\\"` -> `"`; any other
+    backslash is literal."""
+    out: list[str] = []
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
+        if ch == "\\" and i + 1 < len(inner) and inner[i + 1] in '\\"':
+            out.append(inner[i + 1])
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _unquote(raw: str) -> str:
     raw = raw.strip()
     if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
         inner = raw[1:-1]
-        return inner.replace('\\"', '"') if raw[0] == '"' else inner.replace("''", "'")
+        return _unescape_double(inner) if raw[0] == '"' else inner.replace("''", "'")
     return raw
 
 

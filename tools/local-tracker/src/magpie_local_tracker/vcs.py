@@ -52,6 +52,20 @@ class WorkingCopy:
             ]
         return []
 
+    def unpushed(self) -> int | None:
+        """Commits on this Git branch not yet on its upstream; None when unknown.
+
+        A publish whose commit succeeded but whose push failed leaves the tracker
+        clean yet unpublished; this is how `pending` and `publish` still see it.
+        """
+        if self.kind != "git":
+            return 0
+        try:
+            out = self._run("git", "rev-list", "--count", "@{upstream}..HEAD")
+        except VcsError:
+            return None
+        return int(out.strip() or 0)
+
     def remotes(self) -> list[str]:
         if self.kind == "git":
             out = self._run("git", "remote", "-v", check=False)
@@ -90,6 +104,17 @@ class WorkingCopy:
         if self.kind == "git":
             self._run("git", "add", "-A", "--", rel_root)
             if not self._run("git", "diff", "--cached", "--name-only", "--", rel_root).strip():
+                unpushed = self.unpushed()
+                if push and unpushed:
+                    # An earlier publish committed but did not push: push it now.
+                    self._run("git", "push")
+                    revision = self._run("git", "rev-parse", "HEAD").strip()
+                    return {
+                        "committed": False,
+                        "pushed": True,
+                        "revision": revision,
+                        "note": "pushed earlier commits",
+                    }
                 return {"committed": False, "pushed": False, "revision": None, "note": "nothing to commit"}
             with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as fh:
                 fh.write(message)

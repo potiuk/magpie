@@ -5,8 +5,8 @@
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import re
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,6 +58,7 @@ class Entry:
     path: Path  # the issue markdown file
     container: Path  # folder (folder layout) or the file itself
     state_dir: str  # "" unless state.mode == "directory"
+    prefix: str = ""  # which ID prefix the name carries
 
 
 class Tracker:
@@ -96,33 +97,48 @@ class Tracker:
         for state_dir, base in self._bases():
             if not base.is_dir():
                 continue
+            if base.is_symlink():
+                continue
             for child in sorted(base.iterdir()):
-                if child.name.startswith(".") or child.name.lower() in _SKIP_NAMES:
+                if child.name.startswith(".") or child.name.lower() in _SKIP_NAMES or child.is_symlink():
                     continue
                 if self.desc.layout == "folder-per-issue":
                     if not child.is_dir():
                         continue
                     m = rx.match(child.name)
                     issue = self._issue_file(child, child.name)
-                    if m and issue.is_file():
-                        out.append(Entry(child.name, int(m.group("num")), issue, child, state_dir))
+                    if m and issue.is_file() and not issue.is_symlink():
+                        out.append(
+                            Entry(child.name, int(m.group("num")), issue, child, state_dir, m.group("prefix"))
+                        )
                 else:
                     if not (child.is_file() and child.suffix == ".md"):
                         continue
                     m = rx.match(child.stem)
                     if m:
-                        out.append(Entry(child.stem, int(m.group("num")), child, child, state_dir))
+                        out.append(
+                            Entry(child.stem, int(m.group("num")), child, child, state_dir, m.group("prefix"))
+                        )
         return out
 
     def resolve(self, ident: str) -> Entry:
         ident = ident.strip()
-        number: int | None = int(ident) if ident.isdigit() else None
-        for entry in self.entries():
-            if entry.id == ident or (number is not None and entry.number == number):
+        entries = self.entries()
+        for entry in entries:
+            if entry.id == ident:
                 return entry
-            # A slugged name is also addressable by its bare ID.
-            if entry.id.startswith(ident + "-") and self.desc.id.regex().match(ident):
+        rx = self.desc.id.regex()
+        # A slugged name is also addressable by its bare ID.
+        for entry in entries:
+            if entry.id.startswith(ident + "-") and rx.match(ident):
                 return entry
+        if ident.isdigit():
+            matches = [e for e in entries if e.number == int(ident)]
+            if len(matches) > 1:
+                ids = ", ".join(sorted(e.id for e in matches))
+                raise TrackerError(f"{ident!r} is ambiguous ({ids}); use the full ID", 2)
+            if matches:
+                return matches[0]
         raise not_found(f"no tracker {ident!r} under {self.root}")
 
     # ------------------------------------------------------------ guards
@@ -138,14 +154,54 @@ class Tracker:
 
     # ------------------------------------------------------------ reading
 
+    def _contained(self, path: Path) -> Path:
+        """Refuse a path that leaves the tracker root or passes through a symlink.
+
+        The tracker is shared through version control, so anyone who can push
+        to it can plant a symlink; a write that followed one could overwrite a
+        file anywhere the tool can reach.
+        """
+        root = self.root.resolve()
+        current = path
+        while True:
+            if current.is_symlink():
+                raise refused(f"{path} goes through a symlink ({current}); refusing to follow it")
+            if current.resolve() == root or current.parent == current:
+                break
+            current = current.parent
+        try:
+            path.resolve().relative_to(root)
+        except ValueError:
+            raise refused(f"{path} is outside the tracker root {root}") from None
+        return path
+
+    def _read_file(self, path: Path) -> str:
+        """Read a managed file: contained, and opened without following a symlink,
+        so a swap between the check and the open still cannot redirect it."""
+        fd = os.open(self._contained(path), os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, encoding="utf-8") as handle:
+            return handle.read()
+
+    def _write_file(self, path: Path, text: str) -> None:
+        fd = os.open(self._contained(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+
     def _read(self, entry: Entry) -> tuple[md.Metadata, str]:
-        return md.split(entry.path.read_text(encoding="utf-8"))
+        meta, body = md.split(self._read_file(entry.path))
+        if meta.style == "none" and self.desc.metadata in ("front-matter", "bold-fields"):
+            # A report written before the tracker had metadata: the first write
+            # that sets a label, state or milestone gives it the tracker's style
+            # instead of silently dropping the value.
+            meta.style = self.desc.metadata
+            meta.list_style = self.desc.list_style
+        return meta, body
 
     def _write(self, entry: Entry, meta: md.Metadata, body: str) -> None:
         key = self.desc.keys.get("updated", "")
         if key and (key in meta.values or meta.style != "none"):
             meta.values[key] = _today()
-        entry.path.write_text(md.render(meta, body), encoding="utf-8")
+        self._write_file(entry.path, md.render(meta, body))
 
     def _split_managed(self, body: str) -> tuple[str, str]:
         """Split off the trailing sections this tool manages inside the issue file."""
@@ -208,7 +264,7 @@ class Tracker:
             _, start, end = found
             return "\n".join(body.split("\n")[start:end])
         path = self._comments_path(entry)
-        return path.read_text(encoding="utf-8") if path.is_file() else ""
+        return self._read_file(path) if path.is_file() else ""
 
     def _comments_path(self, entry: Entry) -> Path:
         if self.desc.layout == "folder-per-issue":
@@ -258,10 +314,18 @@ class Tracker:
             "path": str(entry.path),
         }
         if with_comments:
-            out["comments"] = [
+            comments: list[dict[str, object]] = [
                 {"id": c.id, "author": c.author, "created": c.created, "body": c.body}
                 for c in sections.parse_comments(self._comments_text(entry, body))
             ]
+            # On GitHub the rollup is a comment, and skills read markers and
+            # earlier decisions out of it; return it the same way, first.
+            rollup, _, _ = self._read_rollup(entry)
+            if rollup:
+                comments.insert(
+                    0, {"id": 0, "author": "", "created": "", "body": rollup.strip(), "kind": "rollup"}
+                )
+            out["comments"] = comments
         return out
 
     def list_issues(
@@ -276,7 +340,7 @@ class Tracker:
             have = {str(lb).lower() for lb in item["labels"]}  # type: ignore[attr-defined]
             if not wanted <= have:
                 continue
-            if search and search.lower() not in entry.path.read_text(encoding="utf-8").lower():
+            if search and search.lower() not in self._read_file(entry.path).lower():
                 continue
             out.append(item)
             if len(out) >= limit:
@@ -309,7 +373,9 @@ class Tracker:
         title = " ".join(title.split())
         if not title:
             raise TrackerError("the title file is empty", 2)
-        number = max((e.number for e in self.entries()), default=0) + 1
+        # Numbering continues the prefix new reports get (``2026-`` next to an
+        # older ``2025-`` series starts from the 2026 series' own maximum).
+        number = max((e.number for e in self.entries() if e.prefix == self.desc.id.prefix), default=0) + 1
         ident = self.desc.id.render(number, slugify(title))
         st = self.desc.state
         base = self.root / st.open_dir if st.mode == "directory" else self.root
@@ -336,8 +402,9 @@ class Tracker:
         text = body.strip("\n") + "\n"
         if self.desc.title_source == "h1":
             text = f"# {title}\n\n{text}"
+        self._contained(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(md.render(meta, text), encoding="utf-8")
+        self._write_file(path, md.render(meta, text))
         return {"id": ident, "url": self.url(path), "path": str(path)}
 
     def edit(
@@ -406,7 +473,7 @@ class Tracker:
         else:
             path = self._comments_path(entry)
             prefix = existing.rstrip("\n") + "\n\n" if existing.strip() else f"# Comments on {entry.id}\n\n"
-            path.write_text(prefix + rendered, encoding="utf-8")
+            self._write_file(path, prefix + rendered)
             self._write(entry, meta, text)
         return {"id": entry.id, "comment_id": cid, "url": self.url(entry.path)}
 
@@ -436,12 +503,16 @@ class Tracker:
         for src in moves:
             rel = src.relative_to(entry.container.parent)
             dst = target_dir / rel
+            self._contained(src)
+            self._contained(dst)
             if src.resolve() != dst.resolve():
                 self.wc.move(src, dst)
         return {"id": entry.id, "state": "closed" if closed else "open"}
 
     def _rollup_name(self) -> str:
-        return self.wc.top.name if self.wc.kind != "none" else self.root.name
+        # Fixed, so a checkout folder named "Security Reports" cannot produce a
+        # marker the next append fails to recognise.
+        return "security-tracker"
 
     def _read_rollup(self, entry: Entry) -> tuple[str | None, md.Metadata, str]:
         meta, body = self._read(entry)
@@ -452,7 +523,7 @@ class Tracker:
             _, start, end = found
             return "\n".join(body.split("\n")[start:end]).strip("\n"), meta, body
         path = self._rollup_path(entry)
-        return (path.read_text(encoding="utf-8") if path.is_file() else None), meta, body
+        return (self._read_file(path) if path.is_file() else None), meta, body
 
     def _write_rollup(self, entry: Entry, meta: md.Metadata, body: str, rollup: str) -> None:
         if self.desc.rollup_mode == "section":
@@ -465,7 +536,7 @@ class Tracker:
                 body = sections.append_to_section(body, self.desc.rollup_heading, 2, rollup)
             self._write(entry, meta, body)
         else:
-            self._rollup_path(entry).write_text(rollup, encoding="utf-8")
+            self._write_file(self._rollup_path(entry), rollup)
             self._write(entry, meta, body)
 
     def rollup_append(self, ident: str, action: str, body: str, user: str, now: str) -> dict[str, object]:
@@ -502,6 +573,9 @@ class Tracker:
         if safe in ("", ".", ".."):
             raise TrackerError("invalid attachment name", 2)
         target = self._attachments_dir(entry) / safe
+        self._contained(target)
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+        fd = os.open(self._contained(target), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(source.read_bytes())
         return {"id": entry.id, "name": safe, "url": self.url(target)}
