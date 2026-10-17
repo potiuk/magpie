@@ -41,9 +41,14 @@ that can emit HTML. (The test suite asserts this.)
 
 Auth is built in. ``setup_credentials`` runs the one-time OAuth consent
 flow and writes the credentials file; ``check_auth`` verifies the stored
-token still works; ``create_draft`` then authenticates on its own. All
-three reuse the shared ``oauth-draft`` credential handling and the same
-``~/.config/apache-magpie/gmail-oauth.json`` file (overridable via
+token still works; ``create_draft`` then authenticates on its own.
+``thread_message_ids`` is the read-only MCP form of
+``oauth-draft-message-id``, so skills never need the token in a
+(sandboxed) shell. Bulk label changes (``oauth-draft-mark-read``) are
+deliberately not exposed: a mailbox-wide mutation stays a human-run
+command. All of them reuse the shared
+``oauth-draft`` credential handling and the same
+``~/.config/apache-magpie-gmail/gmail-oauth.json`` file (overridable via
 ``$GMAIL_OAUTH_CREDENTIALS`` or the ``credentials_path`` argument), so the
 CLI (``oauth-draft-setup``) and this server are interchangeable. See
 ``tools/gmail/oauth-draft/README.md``.
@@ -73,6 +78,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from oauth_draft import create_draft as _cd
+from oauth_draft import message_id as _mid
 from oauth_draft import setup_creds as _setup
 from oauth_draft.credentials import (
     DEFAULT_CREDENTIALS_PATH,
@@ -174,7 +180,7 @@ def create_draft(
             for smoke tests — production replies always want the headers.
         credentials_path: Override the OAuth credentials JSON path. Defaults
             to ``$GMAIL_OAUTH_CREDENTIALS`` or
-            ``~/.config/apache-magpie/gmail-oauth.json``.
+            ``~/.config/apache-magpie-gmail/gmail-oauth.json``.
 
     Returns:
         ``{draft_id, message_id, thread_id, gmail_url, content_type}``.
@@ -213,7 +219,7 @@ def setup_credentials(
         from_address: From: address baked into outgoing drafts. Defaults to
             $GMAIL_FROM, then `git config user.email`.
         credentials_path: Where to write the credentials JSON. Defaults to
-            $GMAIL_OAUTH_CREDENTIALS or ~/.config/apache-magpie/gmail-oauth.json.
+            $GMAIL_OAUTH_CREDENTIALS or ~/.config/apache-magpie-gmail/gmail-oauth.json.
 
     Returns:
         ``{credentials_path, from_address, scopes}``.
@@ -259,7 +265,7 @@ def check_auth(credentials_path: str | None = None) -> dict[str, str]:
 
     Args:
         credentials_path: Override the credentials JSON path. Defaults to
-            $GMAIL_OAUTH_CREDENTIALS or ~/.config/apache-magpie/gmail-oauth.json.
+            $GMAIL_OAUTH_CREDENTIALS or ~/.config/apache-magpie-gmail/gmail-oauth.json.
 
     Returns:
         ``{status: "ok", credentials_path, from_address}`` when auth works;
@@ -274,6 +280,31 @@ def check_auth(credentials_path: str | None = None) -> dict[str, str]:
         "credentials_path": str(path),
         "from_address": creds.from_address or "",
     }
+
+
+def _access_token(credentials_path: str | None) -> str:
+    creds = Credentials.load(locate_credentials(credentials_path), require_from_address=False)
+    return refresh_access_token(creds)
+
+
+@mcp.tool()
+def thread_message_ids(thread_ids: list[str], credentials_path: str | None = None) -> dict[str, str]:
+    """Resolve the root RFC-5322 ``Message-ID`` header of Gmail threads.
+
+    The MCP form of ``oauth-draft-message-id``. Read-only. A thread whose
+    root message has no ``Message-ID`` maps to ``""`` (a data fact, not
+    an error).
+
+    Args:
+        thread_ids: Gmail ``threadId`` values to resolve.
+        credentials_path: Override the credentials JSON path.
+
+    Returns:
+        ``{threadId: message-id}``.
+    """
+    with _as_tool_error():
+        token = _access_token(credentials_path)
+        return {tid: _mid.root_message_id(token, tid) or "" for tid in thread_ids}
 
 
 def main() -> None:

@@ -83,7 +83,14 @@ def _parse(raw: bytes) -> EmailMessage:
 def test_tools_are_registered_without_any_html_parameter():
     tools = asyncio.run(mcp_server.mcp.list_tools())
     names = {t.name for t in tools}
-    assert names == {"create_draft", "setup_credentials", "check_auth"}
+    assert names == {
+        "create_draft",
+        "setup_credentials",
+        "check_auth",
+        "thread_message_ids",
+    }
+    # Bulk mailbox mutation stays a human-run CLI, never an agent tool.
+    assert "modify_threads" not in names
     by_name = {t.name: t for t in tools}
     draft_props = by_name["create_draft"].input_schema.get("properties", {})
     # The draft tool must never expose an HTML / rich-text body knob.
@@ -245,3 +252,20 @@ def test_check_auth_converts_systemexit_to_tool_error():
     ):
         with pytest.raises(RuntimeError, match="refresh failed"):
             mcp_server.check_auth()
+
+
+# --- thread_message_ids --------------------------------------------------
+
+
+def _auth_patches():
+    return (
+        patch.object(mcp_server, "locate_credentials", return_value=pathlib.Path("/dev/null")),
+        patch.object(mcp_server.Credentials, "load", return_value=CREDS),
+        patch.object(mcp_server, "refresh_access_token", return_value="tok"),
+    )
+
+
+def test_thread_message_ids_maps_missing_header_to_empty():
+    a, b, c = _auth_patches()
+    with a, b, c, patch.object(mcp_server._mid, "root_message_id", side_effect=["<root@x>", None]):
+        assert mcp_server.thread_message_ids(["t1", "t2"]) == {"t1": "<root@x>", "t2": ""}

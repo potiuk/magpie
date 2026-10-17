@@ -153,7 +153,9 @@ def test_locate_leaves_an_explicit_legacy_path_alone(tmp_path, monkeypatch):
 def test_locate_falls_back_to_legacy_when_the_move_fails(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("GMAIL_OAUTH_CREDENTIALS", raising=False)
     legacy = write_creds(tmp_path / "legacy.json")
-    monkeypatch.setattr("oauth_draft.credentials.DEFAULT_CREDENTIALS_PATH", tmp_path / "private" / "gmail-oauth.json")
+    monkeypatch.setattr(
+        "oauth_draft.credentials.DEFAULT_CREDENTIALS_PATH", tmp_path / "private" / "gmail-oauth.json"
+    )
     monkeypatch.setattr("oauth_draft.credentials.LEGACY_CREDENTIALS_PATH", legacy)
 
     def refuse(*_args, **_kwargs):

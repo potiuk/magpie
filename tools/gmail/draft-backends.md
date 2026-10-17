@@ -96,13 +96,12 @@ it three advantages over the claude.ai Gmail MCP:
 
 - **Verbatim URLs (the decisive one)** — it does not rewrite links into
   Google tracking redirects; see the privacy warning above.
-- **`threadId`-keyed draft creation** — attaches by `threadId`
-  directly; for a brand-new, non-reply message, omit `--thread-id` and
-  pass `--no-reply-headers`.
-- **Bulk read/modify + delete** — `oauth-draft-mark-read`
-  (label-modify on a query result set) has no MCP equivalent, and
-  `oauth_curl` is the only backend that can delete drafts via the
-  Gmail API.
+- **`threadId`-keyed draft creation** — attaches by `thread_id`
+  directly; for a brand-new, non-reply message, omit `thread_id`.
+- **Bulk read/modify + delete** — `oauth-draft-mark-read` (label-modify
+  on a query result set) is a human-run terminal command, deliberately
+  not an agent tool, and `oauth_curl` is the only backend that can
+  delete drafts via the Gmail API.
 
 The one-time cost is a Google OAuth client + refresh-token setup
 (automated via `oauth-draft-setup`; see
@@ -208,7 +207,7 @@ A setting that resolves nowhere is a question to the user, never a guess.
 
 - `--in-reply-to` — the `Message-ID` of the latest message on the inbound
   thread. PonyMail returns it from `mcp__ponymail__get_thread` and
-  `mcp__ponymail__get_email`; on Gmail, `oauth-draft-message-id` resolves it
+  `mcp__ponymail__get_email`; on Gmail, `mcp__gmail-plaintext__thread_message_ids` resolves it
   ([`operations.md`](operations.md#get-the-root-message-id-of-a-thread)).
   When only the root is known, use the root `Message-ID` the tracker records
   in its *Security mailing list thread* field.

@@ -869,13 +869,14 @@ reading the same paths.
 The Gmail OAuth refresh token gets no such split. It lives in its own
 directory, `~/.config/apache-magpie-gmail/`, which is denied to both:
 a sandboxed command runs without a prompt, so a readable token would
-let any such command act on the user's Gmail. Drafting goes through
-the `oauth-draft` MCP server (see
+let any such command act on the user's Gmail. Every Gmail call the
+skills make (drafting, `Message-ID` lookup) goes
+through the `oauth-draft` MCP server (see
 [`tools/gmail/oauth-draft/README.md` → MCP server](../../tools/gmail/oauth-draft/README.md#mcp-server)),
 which Claude Code starts outside the sandbox. That is also why neither
 `oauth2.googleapis.com` nor `gmail.googleapis.com` is in
-`allowedDomains`. The `oauth-draft-*` CLIs still work, but only
-outside the sandbox: approve each run, or add a per-machine
+`allowedDomains`. The `oauth-draft-*` CLIs remain for humans and work
+only outside the sandbox: approve each run, or add a per-machine
 `sandbox.excludedCommands` entry naming your framework checkout's
 absolute path in user-scope or `settings.local.json` settings. Never use
 a wildcard path there. `sandbox-lint` refuses the token directory in

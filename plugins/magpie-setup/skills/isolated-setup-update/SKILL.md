@@ -18,7 +18,7 @@ when_to_use: >-
 capability: capability:platform
 surface_hash: sha256:1f327e069312dad2
 license: Apache-2.0
-measured_tokens: 6305
+measured_tokens: 6315
 ---
 
 <!-- Placeholder convention (see AGENTS.md#placeholder-convention-used-in-skill-files):
@@ -166,7 +166,7 @@ Walk each:
      It moved out of the readable `~/.config/apache-magpie/` into its own directory, `~/.config/apache-magpie-gmail/`, and the Google API hosts left `allowedDomains`.
      Report as a **must-fix**, not dead weight, any of these: a token file still at `~/.config/apache-magpie/gmail-oauth.json` (`test -f` works in the sandbox, since that directory is readable; the `oauth-draft` tools move it on their next run, but until then it is exposed); `~/.config/apache-magpie-gmail/` in `sandbox.filesystem.allowRead` in any scope; `oauth2.googleapis.com` / `gmail.googleapis.com` in `allowedDomains`.
      Propose `mkdir -p ~/.config/apache-magpie-gmail && mv ~/.config/apache-magpie/gmail-oauth.json ~/.config/apache-magpie-gmail/` and the `Read(~/.config/apache-magpie-gmail/**)` deny. `~/.config/apache-magpie/` itself stays in `allowRead`.
-     Drafting keeps working through the `oauth-draft` MCP server, which runs outside the sandbox; the `oauth-draft-*` CLIs need an approved run or a per-machine absolute-path exclusion ([`docs/setup/secure-agent-setup.md` → The framework's own `.claude/settings.json`](../../../../docs/setup/secure-agent-setup.md#the-frameworks-own-claudesettingsjson)).
+     Drafting and `Message-ID` lookup keep working through the `oauth-draft` MCP server, which runs outside the sandbox; the `oauth-draft-*` CLIs (for humans) need an approved run or a per-machine absolute-path exclusion ([`docs/setup/secure-agent-setup.md` → The framework's own `.claude/settings.json`](../../../../docs/setup/secure-agent-setup.md#the-frameworks-own-claudesettingsjson)).
    - **`enableWeakerNetworkIsolation: true`.**
      It is not there for lychee, which runs offline.
      It lets native-TLS CLI tools verify TLS through the sandbox's TLS-terminating proxy — the mechanism the schema notes for `gh` / `gcloud` / `terraform`.

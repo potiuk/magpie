@@ -43,9 +43,9 @@ user-provided OAuth refresh token. Five console scripts:
 |---|---|
 | `oauth-draft-setup` | One-time interactive OAuth consent flow that writes the credentials JSON. |
 | `oauth-draft-create` | Create a Gmail draft with `threadId` attachment. (As of the `replyToMessageId` parameter on the claude.ai Gmail MCP `create_draft`, the MCP can also produce thread-attached drafts — see [`../draft-backends.md`](../draft-backends.md). This script remains useful when you have a `threadId` on hand and would rather skip the extra `get_thread` round-trip the MCP path requires, and is the only path that lets the skills delete drafts via the Gmail API afterwards.) |
-| `oauth-draft-mark-read` | Bulk-modify Gmail threads matching a search query (default: mark as read by removing the `UNREAD` label). No MCP equivalent today. |
-| `oauth-draft-message-id` | Resolve the root RFC-5322 `Message-ID` header of one or more threads (`threads.get?format=metadata`). No MCP equivalent — the claude.ai Gmail MCP `get_thread` surfaces only Gmail's opaque per-message IDs, never the `Message-ID:` header. `security-issue-import` records the result in the *Security mailing list thread* tracker field. |
-| `oauth-draft-mcp` | Exposes the same plain-text drafting as an **MCP server** (`create_draft`, plus `setup_credentials` / `check_auth` for in-MCP authentication) so any MCP-speaking agent can create Gmail drafts without the claude.ai Gmail connector (which rewrites links into tracking redirects). Needs the optional `mcp` extra. See [MCP server](#mcp-server) below. |
+| `oauth-draft-mark-read` | Bulk-modify Gmail threads matching a search query (default: mark as read by removing the `UNREAD` label). Deliberately no MCP form: a bulk mailbox change stays a command a human runs in a terminal. |
+| `oauth-draft-message-id` | Resolve the root RFC-5322 `Message-ID` header of one or more threads (`threads.get?format=metadata`). MCP form: `thread_message_ids` (the claude.ai Gmail MCP `get_thread` surfaces only Gmail's opaque per-message IDs, never the `Message-ID:` header). `security-issue-import` records the result in the *Security mailing list thread* tracker field. |
+| `oauth-draft-mcp` | Exposes the same plain-text drafting as an **MCP server** (`create_draft`, `thread_message_ids`, plus `setup_credentials` / `check_auth` for in-MCP authentication) so any MCP-speaking agent can create Gmail drafts without the claude.ai Gmail connector (which rewrites links into tracking redirects). Needs the optional `mcp` extra. See [MCP server](#mcp-server) below. |
 
 The **strongly preferred** drafting backend is this `oauth_curl` tool:
 the claude.ai Gmail MCP `create_draft` silently rewrites embedded URLs
@@ -107,9 +107,11 @@ hosts, so a sandboxed command cannot use the token without a prompt
 (see [`secure-agent-setup.md`](../../../docs/setup/secure-agent-setup.md#the-frameworks-own-claudesettingsjson)).
 Approve each run, or add a per-machine `sandbox.excludedCommands`
 entry with your framework checkout's absolute path to user-scope or
-`settings.local.json` settings, never a wildcard path. For drafting
-alone, the [MCP server](#mcp-server) needs neither: Claude Code starts
-it outside the sandbox.
+`settings.local.json` settings, never a wildcard path. Agents should
+not need either: the [MCP server](#mcp-server) covers drafting and
+`Message-ID` lookup, and Claude Code starts it outside the sandbox.
+The scripts remain for humans in a terminal, and bulk label changes
+(`oauth-draft-mark-read`) are deliberately left to them.
 
 ## Setup — one-time
 

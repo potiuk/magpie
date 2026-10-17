@@ -184,22 +184,21 @@ backend:
   is keyed on `Message-ID`; `mcp__ponymail__get_email` and
   `mcp__ponymail__search_list` results carry it directly — no extra
   fetch needed.
-- **Gmail backend (claude.ai MCP).** Use the `oauth-draft-message-id`
-  console script, which reuses the same OAuth credentials as the
-  `gmail-plaintext` MCP server and queries
-  `threads.get?format=metadata&metadataHeaders=Message-ID`:
+- **Gmail backend.** Call the `gmail-plaintext` MCP server's
+  `thread_message_ids` tool, which queries
+  `threads.get?format=metadata&metadataHeaders=Message-ID`. Never run
+  the `oauth-draft-message-id` script from a sandboxed shell: the
+  sandbox denies it the OAuth token.
 
-  ```bash
-  uv run --project tools/gmail/oauth-draft \
-    oauth-draft-message-id <threadId> [<threadId> ...]
-  # → one TSV line per thread: <threadId>\t<message-id>
-  # → or --json for a {threadId: message-id} object
+  ```text
+  mcp__gmail-plaintext__thread_message_ids(thread_ids=['<threadId>', ...])
+  # → {threadId: message-id}
   ```
 
-  See [`oauth-draft/README.md`](oauth-draft/README.md) for setup. The
-  script prints the `Message-ID` of the thread's **root**
+  See [`oauth-draft/README.md`](oauth-draft/README.md#mcp-server) for
+  setup. The tool returns the `Message-ID` of the thread's **root**
   (chronologically first) message — the inbound report. A thread with
-  no resolvable header prints an empty value and still exits 0.
+  no resolvable header maps to `""`; that is a data fact, not an error.
 
 When recording the value in a tracker field, **backtick-wrap it** —
 a bare `<...@...>` renders as an HTML tag on GitHub and the
