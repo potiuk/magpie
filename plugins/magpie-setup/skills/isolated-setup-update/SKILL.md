@@ -18,7 +18,7 @@ when_to_use: >-
 capability: capability:platform
 surface_hash: sha256:1f327e069312dad2
 license: Apache-2.0
-measured_tokens: 6287
+measured_tokens: 6305
 ---
 
 <!-- Placeholder convention (see AGENTS.md#placeholder-convention-used-in-skill-files):
@@ -164,7 +164,7 @@ Walk each:
      A settings file without those hosts is current, not stale — report their *presence* as dead weight to drop, never their absence as drift.
    - **The Gmail token is no longer sandbox-readable.**
      It moved out of the readable `~/.config/apache-magpie/` into its own directory, `~/.config/apache-magpie-gmail/`, and the Google API hosts left `allowedDomains`.
-     Report as a **must-fix**, not dead weight, any of these: a token file still at `~/.config/apache-magpie/gmail-oauth.json` (test the path with `test -f` outside the sandbox, or ask the user); `~/.config/apache-magpie-gmail/` in `sandbox.filesystem.allowRead` in any scope; `oauth2.googleapis.com` / `gmail.googleapis.com` in `allowedDomains`.
+     Report as a **must-fix**, not dead weight, any of these: a token file still at `~/.config/apache-magpie/gmail-oauth.json` (`test -f` works in the sandbox, since that directory is readable; the `oauth-draft` tools move it on their next run, but until then it is exposed); `~/.config/apache-magpie-gmail/` in `sandbox.filesystem.allowRead` in any scope; `oauth2.googleapis.com` / `gmail.googleapis.com` in `allowedDomains`.
      Propose `mkdir -p ~/.config/apache-magpie-gmail && mv ~/.config/apache-magpie/gmail-oauth.json ~/.config/apache-magpie-gmail/` and the `Read(~/.config/apache-magpie-gmail/**)` deny. `~/.config/apache-magpie/` itself stays in `allowRead`.
      Drafting keeps working through the `oauth-draft` MCP server, which runs outside the sandbox; the `oauth-draft-*` CLIs need an approved run or a per-machine absolute-path exclusion ([`docs/setup/secure-agent-setup.md` → The framework's own `.claude/settings.json`](../../../../docs/setup/secure-agent-setup.md#the-frameworks-own-claudesettingsjson)).
    - **`enableWeakerNetworkIsolation: true`.**

@@ -880,8 +880,10 @@ outside the sandbox: approve each run, or add a per-machine
 absolute path in user-scope or `settings.local.json` settings. Never use
 a wildcard path there. `sandbox-lint` refuses the token directory in
 `allowRead`. A token left at the old path,
-`~/.config/apache-magpie/gmail-oauth.json`, is sandbox-readable: the
-tools still find it but warn, so move it with
+`~/.config/apache-magpie/gmail-oauth.json`, is sandbox-readable. The
+`oauth-draft` tools move it into `~/.config/apache-magpie-gmail/`
+(directory `0700`, file `0600`) the first time they run, unless the
+path was given explicitly; to move it straight away, run
 `mkdir -p ~/.config/apache-magpie-gmail && mv ~/.config/apache-magpie/gmail-oauth.json ~/.config/apache-magpie-gmail/`.
 
 **What the vetted-ops exclusion does and does not cover.** The `deny`

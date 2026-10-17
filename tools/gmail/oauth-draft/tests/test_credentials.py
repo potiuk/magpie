@@ -122,14 +122,48 @@ def test_locate_prefers_default_over_legacy(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().err == ""
 
 
-def test_locate_legacy_path_still_works_but_warns(tmp_path, monkeypatch, capsys):
+def test_locate_moves_legacy_file_into_private_dir(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("GMAIL_OAUTH_CREDENTIALS", raising=False)
+    (tmp_path / "apache-magpie").mkdir()
+    legacy = write_creds(tmp_path / "apache-magpie" / "gmail-oauth.json")
+    target = tmp_path / "apache-magpie-gmail" / "gmail-oauth.json"
+    monkeypatch.setattr("oauth_draft.credentials.DEFAULT_CREDENTIALS_PATH", target)
+    monkeypatch.setattr("oauth_draft.credentials.LEGACY_CREDENTIALS_PATH", legacy)
+    content = legacy.read_text()
+
+    assert locate_credentials(None) == target
+    assert not legacy.exists()
+    assert target.read_text() == content
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert target.parent.stat().st_mode & 0o777 == 0o700
+    assert "Moved Gmail OAuth credentials" in capsys.readouterr().err
+
+
+def test_locate_leaves_an_explicit_legacy_path_alone(tmp_path, monkeypatch):
     monkeypatch.delenv("GMAIL_OAUTH_CREDENTIALS", raising=False)
     legacy = write_creds(tmp_path / "legacy.json")
-    monkeypatch.setattr("oauth_draft.credentials.DEFAULT_CREDENTIALS_PATH", tmp_path / "missing.json")
+    target = tmp_path / "private" / "gmail-oauth.json"
+    monkeypatch.setattr("oauth_draft.credentials.DEFAULT_CREDENTIALS_PATH", target)
     monkeypatch.setattr("oauth_draft.credentials.LEGACY_CREDENTIALS_PATH", legacy)
+    assert locate_credentials(str(legacy)) == legacy
+    assert legacy.exists()
+    assert not target.exists()
+
+
+def test_locate_falls_back_to_legacy_when_the_move_fails(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("GMAIL_OAUTH_CREDENTIALS", raising=False)
+    legacy = write_creds(tmp_path / "legacy.json")
+    monkeypatch.setattr("oauth_draft.credentials.DEFAULT_CREDENTIALS_PATH", tmp_path / "private" / "gmail-oauth.json")
+    monkeypatch.setattr("oauth_draft.credentials.LEGACY_CREDENTIALS_PATH", legacy)
+
+    def refuse(*_args, **_kwargs):
+        raise OSError("cross-device link")
+
+    monkeypatch.setattr("oauth_draft.credentials.os.replace", refuse)
     assert locate_credentials(None) == legacy
+    assert legacy.exists()
     err = capsys.readouterr().err
-    assert "legacy path" in err
+    assert "moving them failed" in err
     assert "mv" in err
 
 

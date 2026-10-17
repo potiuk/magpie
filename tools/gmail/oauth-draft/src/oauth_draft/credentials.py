@@ -45,8 +45,8 @@ GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
 # lets sandboxed commands read that directory for framework config, so
 # the refresh token must sit somewhere the sandbox keeps denied. Was
 # historically ``~/.config/airflow-s/gmail-oauth.json``, then
-# ``~/.config/apache-magpie/gmail-oauth.json`` (still found, with a
-# warning, see LEGACY_CREDENTIALS_PATH). Override with
+# ``~/.config/apache-magpie/gmail-oauth.json`` (moved here automatically
+# when found, see LEGACY_CREDENTIALS_PATH). Override with
 # ``$GMAIL_OAUTH_CREDENTIALS`` or ``--credentials``.
 DEFAULT_CREDENTIALS_DIR = pathlib.Path.home() / ".config" / "apache-magpie-gmail"
 DEFAULT_CREDENTIALS_PATH = DEFAULT_CREDENTIALS_DIR / "gmail-oauth.json"
@@ -91,8 +91,10 @@ class Credentials:
 def locate_credentials(explicit: str | None) -> pathlib.Path:
     """Resolve the credentials path: ``--credentials`` → env → default → legacy.
 
-    The legacy path still works so existing setups keep drafting, but
-    it warns: that directory is sandbox-readable under the secure setup.
+    A file found only at the legacy path (sandbox-readable under the
+    secure setup) is moved to the default path first, so existing setups
+    keep drafting and the token leaves the readable directory. A legacy
+    path given explicitly or via the environment is used as-is.
     Raises ``SystemExit`` with a helpful list of paths tried if none
     of the candidates exists.
     """
@@ -100,26 +102,50 @@ def locate_credentials(explicit: str | None) -> pathlib.Path:
         explicit,
         os.environ.get("GMAIL_OAUTH_CREDENTIALS"),
         str(DEFAULT_CREDENTIALS_PATH),
-        str(LEGACY_CREDENTIALS_PATH),
     ]
     for c in candidates:
         if not c:
             continue
         p = pathlib.Path(c).expanduser()
         if p.is_file():
-            if p == LEGACY_CREDENTIALS_PATH:
-                print(
-                    f"warning: Gmail OAuth credentials found at the legacy path {p}, "
-                    "which sandboxed commands can read under the secure agent setup. "
-                    f"Move the file: mkdir -p {DEFAULT_CREDENTIALS_DIR} && mv {p} {DEFAULT_CREDENTIALS_PATH}",
-                    file=sys.stderr,
-                )
             return p
+    if LEGACY_CREDENTIALS_PATH.is_file():
+        return _migrate_legacy_credentials()
+    candidates.append(str(LEGACY_CREDENTIALS_PATH))
     raise SystemExit(
         "No Gmail OAuth credentials found. Tried: "
         + ", ".join(str(pathlib.Path(c).expanduser()) for c in candidates if c)
         + ". See tools/gmail/oauth-draft/README.md."
     )
+
+
+def _migrate_legacy_credentials() -> pathlib.Path:
+    """Move the token from the legacy path into its own 0700 directory.
+
+    ``os.replace`` is an atomic rename on the same filesystem, so the
+    token is never in both places or half-written. If the move fails the
+    legacy file is used for this run, with a warning to move it by hand.
+    """
+    legacy, target = LEGACY_CREDENTIALS_PATH, DEFAULT_CREDENTIALS_PATH
+    try:
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        target.parent.chmod(0o700)
+        os.replace(legacy, target)
+        target.chmod(0o600)
+    except OSError as e:
+        print(
+            f"warning: Gmail OAuth credentials are at the legacy path {legacy}, which "
+            f"sandboxed commands can read under the secure agent setup, and moving them "
+            f"failed ({e}). Move the file: mkdir -p {target.parent} && mv {legacy} {target}",
+            file=sys.stderr,
+        )
+        return legacy
+    print(
+        f"Moved Gmail OAuth credentials from {legacy} to {target} "
+        "(the old directory is sandbox-readable under the secure agent setup).",
+        file=sys.stderr,
+    )
+    return target
 
 
 def refresh_access_token(creds: Credentials) -> str:
