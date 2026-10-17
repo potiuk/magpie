@@ -143,7 +143,7 @@ while sandboxed Bash can do neither.
    `credentials_path=<tools.gmail.oauth_credentials_path>` when
    `.apache-magpie-overrides/user.md` sets it (otherwise the server uses
    `$GMAIL_OAUTH_CREDENTIALS`, then
-   `~/.config/apache-magpie/gmail-oauth.json`). `status: "ok"` means
+   `~/.config/apache-magpie-gmail/gmail-oauth.json`). `status: "ok"` means
    the backend is usable; a tool error means it is not. Never probe the
    path with a shell command: the sandbox denies it, so the probe would
    always report the credentials missing. When the

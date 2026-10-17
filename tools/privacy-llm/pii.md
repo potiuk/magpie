@@ -164,7 +164,7 @@ Format:
 ```
 
 - The file is mode `600` and lives outside the project tree —
-  the same security posture as `~/.config/apache-magpie/gmail-oauth.json`.
+  the same security posture as `~/.config/apache-magpie-gmail/gmail-oauth.json`.
 - Writes are atomic (`tempfile + os.replace`) so a crash mid-write
   cannot leave a half-baked file.
 - The mapping is **per-machine, never committed**. Each

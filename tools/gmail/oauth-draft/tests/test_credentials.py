@@ -96,9 +96,41 @@ def test_locate_raises_when_nothing_exists(tmp_path, monkeypatch):
         "oauth_draft.credentials.DEFAULT_CREDENTIALS_PATH",
         tmp_path / "does-not-exist.json",
     )
+    monkeypatch.setattr(
+        "oauth_draft.credentials.LEGACY_CREDENTIALS_PATH",
+        tmp_path / "legacy-does-not-exist.json",
+    )
     with pytest.raises(SystemExit) as excinfo:
         locate_credentials(None)
     assert "No Gmail OAuth credentials found" in str(excinfo.value)
+
+
+def test_default_path_is_outside_the_framework_config_dir():
+    from oauth_draft.credentials import DEFAULT_CREDENTIALS_PATH
+
+    # ~/.config/apache-magpie/ is sandbox-readable; the token must not live there.
+    assert DEFAULT_CREDENTIALS_PATH.parent.name == "apache-magpie-gmail"
+
+
+def test_locate_prefers_default_over_legacy(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("GMAIL_OAUTH_CREDENTIALS", raising=False)
+    default = write_creds(tmp_path / "default.json")
+    legacy = write_creds(tmp_path / "legacy.json")
+    monkeypatch.setattr("oauth_draft.credentials.DEFAULT_CREDENTIALS_PATH", default)
+    monkeypatch.setattr("oauth_draft.credentials.LEGACY_CREDENTIALS_PATH", legacy)
+    assert locate_credentials(None) == default
+    assert capsys.readouterr().err == ""
+
+
+def test_locate_legacy_path_still_works_but_warns(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("GMAIL_OAUTH_CREDENTIALS", raising=False)
+    legacy = write_creds(tmp_path / "legacy.json")
+    monkeypatch.setattr("oauth_draft.credentials.DEFAULT_CREDENTIALS_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr("oauth_draft.credentials.LEGACY_CREDENTIALS_PATH", legacy)
+    assert locate_credentials(None) == legacy
+    err = capsys.readouterr().err
+    assert "legacy path" in err
+    assert "mv" in err
 
 
 # --- refresh_access_token --------------------------------------------------

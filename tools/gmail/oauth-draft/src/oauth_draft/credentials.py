@@ -32,6 +32,7 @@ import dataclasses
 import json
 import os
 import pathlib
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -39,14 +40,17 @@ import urllib.request
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
 
-# Default location of the credentials file. Was historically
-# ``~/.config/airflow-s/gmail-oauth.json`` when this tool lived in the
-# Apache Airflow security tracker repo; renamed to
-# ``apache-magpie`` here as the framework was generalised. Existing
-# adopters who still have the file at the old path can either move it
-# or set ``$GMAIL_OAUTH_CREDENTIALS`` (or pass ``--credentials``).
-DEFAULT_CREDENTIALS_DIR = pathlib.Path.home() / ".config" / "apache-magpie"
+# Default location of the credentials file. It lives in its own
+# directory, not in ``~/.config/apache-magpie/``: the secure agent setup
+# lets sandboxed commands read that directory for framework config, so
+# the refresh token must sit somewhere the sandbox keeps denied. Was
+# historically ``~/.config/airflow-s/gmail-oauth.json``, then
+# ``~/.config/apache-magpie/gmail-oauth.json`` (still found, with a
+# warning, see LEGACY_CREDENTIALS_PATH). Override with
+# ``$GMAIL_OAUTH_CREDENTIALS`` or ``--credentials``.
+DEFAULT_CREDENTIALS_DIR = pathlib.Path.home() / ".config" / "apache-magpie-gmail"
 DEFAULT_CREDENTIALS_PATH = DEFAULT_CREDENTIALS_DIR / "gmail-oauth.json"
+LEGACY_CREDENTIALS_PATH = pathlib.Path.home() / ".config" / "apache-magpie" / "gmail-oauth.json"
 
 
 @dataclasses.dataclass
@@ -85,8 +89,10 @@ class Credentials:
 
 
 def locate_credentials(explicit: str | None) -> pathlib.Path:
-    """Resolve the credentials path: ``--credentials`` → env → default.
+    """Resolve the credentials path: ``--credentials`` → env → default → legacy.
 
+    The legacy path still works so existing setups keep drafting, but
+    it warns: that directory is sandbox-readable under the secure setup.
     Raises ``SystemExit`` with a helpful list of paths tried if none
     of the candidates exists.
     """
@@ -94,12 +100,20 @@ def locate_credentials(explicit: str | None) -> pathlib.Path:
         explicit,
         os.environ.get("GMAIL_OAUTH_CREDENTIALS"),
         str(DEFAULT_CREDENTIALS_PATH),
+        str(LEGACY_CREDENTIALS_PATH),
     ]
     for c in candidates:
         if not c:
             continue
         p = pathlib.Path(c).expanduser()
         if p.is_file():
+            if p == LEGACY_CREDENTIALS_PATH:
+                print(
+                    f"warning: Gmail OAuth credentials found at the legacy path {p}, "
+                    "which sandboxed commands can read under the secure agent setup. "
+                    f"Move the file: mkdir -p {DEFAULT_CREDENTIALS_DIR} && mv {p} {DEFAULT_CREDENTIALS_PATH}",
+                    file=sys.stderr,
+                )
             return p
     raise SystemExit(
         "No Gmail OAuth credentials found. Tried: "

@@ -395,7 +395,7 @@ def test_invariant_missing_deny_read_root(baseline: dict[str, Any]) -> None:
         "~/.kube",
         "~/.azure",
         "~/.config/gcloud",
-        "~/.config/apache-magpie/",
+        "~/.config/apache-magpie-gmail/",
         "/",
         "~/",
         "~/.ssh//",

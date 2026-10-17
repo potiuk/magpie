@@ -2,6 +2,6 @@
      https://www.apache.org/licenses/LICENSE-2.0 -->
 
 Neither `<project-config>/project.md` nor the resolved `user.md` has a
-`mail_create` block. A Gmail OAuth credential exists at `~/.config/apache-magpie/gmail-oauth.json`.
+`mail_create` block. A Gmail OAuth credential exists at `~/.config/apache-magpie-gmail/gmail-oauth.json`.
 
 The skill is about to draft a reply to the reporter.

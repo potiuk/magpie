@@ -78,10 +78,11 @@ FORBIDDEN_ALLOW_READ = {
     "~/.kube",
     "~/.azure",
     "~/.config/gcloud",
-    # The Gmail OAuth refresh token. The oauth-draft MCP server reads it
-    # outside the sandbox; a readable token plus the Google API hosts
-    # would let any unprompted sandboxed command use the user's Gmail.
-    "~/.config/apache-magpie",
+    # The Gmail OAuth refresh token's own directory (kept apart from the
+    # readable ~/.config/apache-magpie/). The oauth-draft MCP server reads
+    # it outside the sandbox; a sandbox-readable token would let any
+    # unprompted sandboxed command use the user's Gmail.
+    "~/.config/apache-magpie-gmail",
 }
 
 # allowWrite must be even more restrictive than allowRead. A path

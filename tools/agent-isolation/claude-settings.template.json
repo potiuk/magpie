@@ -25,6 +25,7 @@
         "~/.local/bin/",
         "~/.docker/bin/",
         "~/.docker/cli-plugins/",
+        "~/.config/apache-magpie/",
         "~/.gnupg/",
         "/run/user/*/gnupg/"
       ],
@@ -138,6 +139,7 @@
       "Read(~/.kube/**)",
       "Read(~/.config/gh/**)",
       "Read(~/.config/apache-magpie/**)",
+      "Read(~/.config/apache-magpie-gmail/**)",
       "Read(~/.config/gcloud/**)",
       "Read(~/.azure/**)",
       "Read(//**/.env)",

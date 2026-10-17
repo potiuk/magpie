@@ -548,6 +548,7 @@ The full block is below, annotated.
         "~/.local/bin/",              // uv-installed tool entry points
         "~/.docker/bin/",             // Docker Desktop's `docker` CLI (macOS); the rest of ~/.docker stays denied
         "~/.docker/cli-plugins/",     // `docker compose` / `docker buildx` plugin binaries
+        "~/.config/apache-magpie/",  // framework config and tool state (user.md, PII map, ...); NOT the Gmail token, which lives in ~/.config/apache-magpie-gmail/
         "~/.gnupg/",                  // gpg keyring reads (needed for signing, not sufficient on Linux — see sandbox-troubleshooting.md)
         "/run/user/*/gnupg/",         // gpg-agent socket dir (see "agent appears unreachable" in sandbox-troubleshooting.md)
         "~/.ssh/id_ed25519_sk.pub"    // ONLY with `gpg.format=ssh`: the public half git hands to `ssh-keygen -Y sign`. Use the file `git config user.signingkey` names (see sandbox-troubleshooting.md)
@@ -703,7 +704,8 @@ The full block is below, annotated.
       "Read(~/.aws/**)", "Read(~/.ssh/**)", "Read(~/.netrc)",
       "Read(~/.docker/**)", "Read(~/.kube/**)",
       "Read(~/.config/gh/**)",                  // bash can read it (sandbox.allowRead); the AGENT can't
-      "Read(~/.config/apache-magpie/**)",      // Gmail OAuth token: only the oauth-draft MCP server reads it, outside the sandbox
+      "Read(~/.config/apache-magpie/**)",      // same split as gh: Bash tools read framework config; the AGENT can't
+      "Read(~/.config/apache-magpie-gmail/**)", // Gmail OAuth token: denied to the agent AND to sandboxed Bash
       "Read(~/.config/gcloud/**)", "Read(~/.azure/**)",
       "Read(//**/.env)", "Read(//**/.env.local)", "Read(//**/.env.*.local)",
       "Bash(curl *)", "Bash(wget *)",           // network egress via Bash bypasses the sandbox proxy
@@ -856,26 +858,31 @@ The full block is below, annotated.
 }
 ```
 
-The deny / allow split for `~/.config/gh/` is deliberate: the `gh`
-CLI needs to *use* the credential, but the agent should never *see*
-it. `sandbox.filesystem.allowRead` permits the bash subprocess to
-read the file; `permissions.deny[Read(...)]` blocks the agent's Read
-tool from reading the same path.
+The deny / allow split for `~/.config/gh/` and
+`~/.config/apache-magpie/` is deliberate: bash subprocesses (the `gh`
+CLI, framework tools reading `user.md` or their own state) need to
+*use* those files, but the agent should never *see* them.
+`sandbox.filesystem.allowRead` permits the bash subprocess to read
+them; `permissions.deny[Read(...)]` blocks the agent's Read tool from
+reading the same paths.
 
-`~/.config/apache-magpie/` gets no such split: it is denied to both.
-It holds the Gmail OAuth refresh token, and a sandboxed command runs
-without a prompt, so a readable token plus reachable Google API hosts
-would let any such command act on the user's Gmail. Drafting goes
-through the `oauth-draft` MCP server instead (see
+The Gmail OAuth refresh token gets no such split. It lives in its own
+directory, `~/.config/apache-magpie-gmail/`, which is denied to both:
+a sandboxed command runs without a prompt, so a readable token would
+let any such command act on the user's Gmail. Drafting goes through
+the `oauth-draft` MCP server (see
 [`tools/gmail/oauth-draft/README.md` → MCP server](../../tools/gmail/oauth-draft/README.md#mcp-server)),
-which Claude Code starts outside the sandbox. That is why neither
+which Claude Code starts outside the sandbox. That is also why neither
 `oauth2.googleapis.com` nor `gmail.googleapis.com` is in
 `allowedDomains`. The `oauth-draft-*` CLIs still work, but only
 outside the sandbox: approve each run, or add a per-machine
 `sandbox.excludedCommands` entry naming your framework checkout's
 absolute path in user-scope or `settings.local.json` settings. Never use
-a wildcard path there. `sandbox-lint` refuses the token path in
-`allowRead`.
+a wildcard path there. `sandbox-lint` refuses the token directory in
+`allowRead`. A token left at the old path,
+`~/.config/apache-magpie/gmail-oauth.json`, is sandbox-readable: the
+tools still find it but warn, so move it with
+`mkdir -p ~/.config/apache-magpie-gmail && mv ~/.config/apache-magpie/gmail-oauth.json ~/.config/apache-magpie-gmail/`.
 
 **What the vetted-ops exclusion does and does not cover.** The `deny`
 rules block the agent's own `Edit`/`Write` tools. The catalogue gets

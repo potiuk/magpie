@@ -202,7 +202,7 @@ Use:
   The draft is **plain text**; the **preferred** backend is `oauth_curl`, which preserves URLs in the body verbatim:
 
   - **`oauth_curl`** (preferred — `tools.gmail.draft_backend: oauth_curl`, credentials at
-    `tools.gmail.oauth_credentials_path` / `$GMAIL_OAUTH_CREDENTIALS` / default `~/.config/apache-magpie/gmail-oauth.json`) — call
+    `tools.gmail.oauth_credentials_path` / `$GMAIL_OAUTH_CREDENTIALS` / default `~/.config/apache-magpie-gmail/gmail-oauth.json`) — call
     `mcp__gmail-plaintext__create_draft`, never a shell command
     (see [`draft-backends.md` § *How the skills pick a backend*](../../../../tools/gmail/draft-backends.md#how-the-skills-pick-a-backend))
     with `thread_id` from Step 1c, the standard `to` / `cc` lists,

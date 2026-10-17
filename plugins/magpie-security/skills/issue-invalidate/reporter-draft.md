@@ -106,7 +106,7 @@ the **recipient** and the **body shape**.
    [`tools/gmail/draft-backends.md`](../../../../tools/gmail/draft-backends.md#how-the-skills-pick-a-backend):
    first Gmail or Maildir, and on `maildir` the [Maildir recipe](../../../../tools/gmail/draft-backends.md#the-maildir-backend).
    On Gmail:
-   Prefer `oauth_curl` (credentials at default path `~/.config/apache-magpie/gmail-oauth.json`), which preserves URLs verbatim.
+   Prefer `oauth_curl` (credentials at default path `~/.config/apache-magpie-gmail/gmail-oauth.json`), which preserves URLs verbatim.
    Use the discouraged `claude_ai_mcp` backend, which
    [rewrites embedded URLs into Google tracking redirects](../../../../tools/gmail/draft-backends.md#privacy-warning--the-claudeai-gmail-mcp-rewrites-embedded-urls-into-google-tracking-redirects),
    only when `oauth_curl` credentials are missing AND the body has no links.

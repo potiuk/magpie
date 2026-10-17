@@ -139,7 +139,7 @@ for `security@<project>.apache.org` triage.
    | Flag | Purpose |
    |---|---|
    | `--from-address` | Address baked into the credentials file as the outgoing `From:`. Defaults to `$GMAIL_FROM`, then `git config user.email`. |
-   | `--out` | Output path. Default: `~/.config/apache-magpie/gmail-oauth.json`. |
+   | `--out` | Output path. Default: `~/.config/apache-magpie-gmail/gmail-oauth.json`. |
    | `--rm-client-secrets` | Delete the input `client_secrets.json` after writing the credentials file. |
 
    The script writes the credentials atomically with mode 600 and
@@ -220,7 +220,7 @@ session on the machine, whether or not that work has anything to do with
 Magpie. Registering it once is enough for every repo you touch.
 
 The server reuses the same credential file as the CLI
-(`~/.config/apache-magpie/gmail-oauth.json`). Authenticate either by
+(`~/.config/apache-magpie-gmail/gmail-oauth.json`). Authenticate either by
 running `oauth-draft-setup` (CLI) or by calling the `setup_credentials`
 tool once — both write the same file.
 
@@ -237,7 +237,7 @@ it like an SSH key:
 - The setup script writes the file with mode 600 and chmods its parent
   directory to 700; do not loosen those.
 - Do **not** commit the credentials file. The path lives outside the
-  repo tree by default (`~/.config/apache-magpie/gmail-oauth.json`).
+  repo tree by default (`~/.config/apache-magpie-gmail/gmail-oauth.json`).
 - Revoke the refresh token at
   <https://myaccount.google.com/permissions> if you suspect it has
   leaked.

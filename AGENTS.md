@@ -508,7 +508,7 @@ persistent token, API key, OAuth refresh token, or session cookie a
 framework tool needs goes under a well-known home-directory path —
 `~/.config/apache-magpie/<tool>` for framework-owned tools, or the
 third-party tool's own convention (Gmail OAuth at
-`~/.config/apache-magpie/gmail-oauth.json`, PonyMail session cookie at
+`~/.config/apache-magpie-gmail/gmail-oauth.json`, PonyMail session cookie at
 `~/.ponymail-mcp/session.json`, GitHub via `gh auth` under
 `~/.config/gh/`). Two reasons this is non-negotiable: the standard
 sandbox denies reads on home-dir credential paths, so an in-tree

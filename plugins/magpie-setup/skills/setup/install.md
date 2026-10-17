@@ -1644,7 +1644,7 @@ redirects (see
 Same hands-off contract as 9c — **surface, do not run**:
 
 1. **Prerequisite — auth:** a Gmail OAuth credential at
-   `~/.config/apache-magpie/gmail-oauth.json`. The operator can create it
+   `~/.config/apache-magpie-gmail/gmail-oauth.json`. The operator can create it
    either with the
    [`oauth-draft-setup`](../../../../tools/gmail/oauth-draft/README.md#setup--one-time)
    CLI **or** by calling the server's own `setup_credentials` tool once —

@@ -45,7 +45,7 @@ denyMessage = "This command is restricted to protect credentials and external sy
 # matches the legacy search_file_content alias. The runtime probe checks both.
 [[rule]]
 toolName = ["read_file", "read_many_files", "list_directory", "glob", "grep_search", "write_file", "replace"]
-argsPattern = '(?:/|\\\\|"|~)(?:\.aws|\.ssh|\.docker|\.kube|\.azure|\.gnupg|\.netrc|\.npmrc|\.pypirc|\.config(?:/|\\\\)(?:gh|gcloud|apache-magpie)|\.gemini(?:/|\\\\)(?:oauth_creds\.json|google_accounts\.json|settings\.json|policies))(?:/|\\\\|"|$)'
+argsPattern = '(?:/|\\\\|"|~)(?:\.aws|\.ssh|\.docker|\.kube|\.azure|\.gnupg|\.netrc|\.npmrc|\.pypirc|\.config(?:/|\\\\)(?:gh|gcloud|apache-magpie|apache-magpie-gmail)|\.gemini(?:/|\\\\)(?:oauth_creds\.json|google_accounts\.json|settings\.json|policies))(?:/|\\\\|"|$)'
 decision = "deny"
 priority = 900
 denyMessage = "Credential files and agent security settings cannot be accessed with file or search tools."

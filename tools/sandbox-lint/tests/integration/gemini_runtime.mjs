@@ -151,6 +151,7 @@ try {
     ['read_file', { file_path: '/home/example/.ssh/id_rsa' }, 'deny'],
     ['read_file', { file_path: 'C:\\Users\\example\\.aws\\credentials' }, 'deny'],
     ['read_file', { file_path: '/home/example/.config/apache-magpie/gmail-oauth.json' }, 'deny'],
+    ['read_file', { file_path: '/home/example/.config/apache-magpie-gmail/gmail-oauth.json' }, 'deny'],
     ['read_file', { file_path: '/home/example/.gemini/oauth_creds.json' }, 'deny'],
     ['read_file', { file_path: 'nested/deep/.env.production.local' }, 'deny'],
     ['read_many_files', { include: ['README.md', '.env'] }, 'deny'],

@@ -80,6 +80,7 @@ PROTECTED_PATHS = (
     ".config/gh/hosts.yml",
     ".config/gcloud/token",
     ".config/apache-magpie/gmail-oauth.json",
+    ".config/apache-magpie-gmail/gmail-oauth.json",
     ".gemini/oauth_creds.json",
     ".gemini/google_accounts.json",
     ".gemini/settings.json",
