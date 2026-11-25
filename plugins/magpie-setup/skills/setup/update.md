@@ -539,6 +539,28 @@ up to date:
      installed on this machine **but not** in the lock's `plugins`
      (an adopted family's tools are already committed).
 
+   **Families enabled for the user but not adopted here** (adopted projects, Claude Code).
+   A family enabled in the user-scope `~/.claude/settings.json` loads in every project, floor or not.
+   Absence from the floor never means *disable*: a maintainer may run a family here on purpose
+   (see [`adopt.md` → `magpie-contributor-growth` is not adoptable by default](adopt.md#magpie-contributor-growth-is-not-adoptable-by-default)).
+   So ask, once per family:
+
+   ```bash
+   PYTHONPATH=<trusted-installed-setup-package-parent> python3 -P -m setup_preflight.local_families candidates --project-root "$(git rev-parse --show-toplevel)"
+   ```
+
+   - `"applicable": false` → skip this part in silence.
+   - Each plugin in `ask` → **keep it here**, or **hide it in this worktree**.
+     A hide adds `"<plugin>@apache-magpie": false` under `enabledPlugins` to the proposed local entries.
+   - Each plugin in `apply` was already hidden in another worktree.
+     Add the same `false` entry without asking again, and say so in one line.
+   - Once the user confirms the copy (step 4), record each answer with
+     `python3 -P -m setup_preflight.local_families record --plugin <plugin> --choice keep|disable`
+     (same `PYTHONPATH`, same `--project-root`).
+     A `keep` is never asked again; a `disable` is carried to new worktrees.
+   - Never propose a family the checker did not list: it already leaves out the floor, substrate plugins,
+     and every `enabledPlugins` entry the user set in a project settings file without Magpie.
+
 2. **Compare with `.claude/settings.local.json`.** Drop any proposed
    entry the committed `.claude/settings.json` already contains (in the
    framework checkout that is every family's MCP tools), then add every

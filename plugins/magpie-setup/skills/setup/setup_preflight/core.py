@@ -447,6 +447,20 @@ def welcome_findings(root: Path, skill: str) -> list[Finding]:
     return [Finding("family", "welcome", section, facts)]
 
 
+def family_not_adopted_findings(root: Path, skill: str) -> list[Finding]:
+    """A one-time hint: this skill's family is enabled for the user but not adopted here."""
+    from . import local_families, welcome
+
+    try:
+        plugin = local_families.hint_due(root, welcome.family_of(skill))
+    except OSError:
+        # An optional hint must not hide the actual setup findings.
+        return []
+    if plugin is None:
+        return []
+    return [Finding("family", "family-not-adopted", "family-not-adopted", {"plugin": plugin})]
+
+
 # --- end-of-run scope ---------------------------------------------------------------
 
 

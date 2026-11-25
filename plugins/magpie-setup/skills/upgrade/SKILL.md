@@ -15,7 +15,7 @@ when_to_use: >-
 capability: capability:platform
 surface_hash: sha256:dca13f574cb22384
 license: Apache-2.0
-measured_tokens: 8150
+measured_tokens: 8167
 ---
 
 <!-- Placeholder convention (see AGENTS.md#placeholder-convention-used-in-skill-files):
@@ -162,7 +162,7 @@ Read a section, not the whole file: find its heading with `grep -n` and read fro
 | Vetted-ops policy | [`setup verify` check 11a](../setup/verify.md#11a-vetted-ops-policy-approval) (`vetted-op-read approval-status`) | a vetted-ops policy exists (committed, or in the personal layer) |
 | Project configuration | [`setup config`](../setup/config.md): [Step 1](../setup/config.md#step-1--work-out-what-is-actually-needed) (`requires_config` per installed skill), [Step 2a](../setup/config.md#step-2a--install-the-pre-flight-checker) (pre-flight checker copy freshness) and [Step 3b](../setup/config.md#step-3b--record-what-this-run-reconciled) (the reconciliation stamp); `layers` answers Step 0 | `configured` is true |
 | Local changes | [`setup verify` 5d](../setup/verify.md#5d-local-configuration-and-what-it-shadows) (what a shadowing personal file means) | `shadowed` is not empty |
-| Local changes | the local agent settings against the template ([`setup update` → Reconcile the local agent settings](../setup/update.md#reconcile-the-local-agent-settings)) | always |
+| Local changes | the local agent settings against the template, and each family enabled for the user but not adopted here (keep or hide) ([`setup update` → Reconcile the local agent settings](../setup/update.md#reconcile-the-local-agent-settings)) | always |
 | Isolated setup | [`setup-isolated-setup-verify`](../isolated-setup-verify/SKILL.md) checks with [`conditional-checks.md`](../isolated-setup-verify/conditional-checks.md), and [`setup-isolated-setup-update` → What to check](../isolated-setup-update/SKILL.md#what-to-check) with [`script-inventory.md`](../isolated-setup-update/script-inventory.md) (script-copy drift, settings shape drift, comdev MCP checkouts, the vetted-ops split) | `isolated.attention` is true |
 
 The *Install health*, *Reconciliation* and *Vetted-ops policy* rows, with *Local changes* 5d, are the whole of [`setup verify`](../setup/verify.md) for this install, so a run of this skill is also a verify run.

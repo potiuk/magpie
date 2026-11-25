@@ -223,6 +223,29 @@ python3 -m setup_preflight.welcome enable --family security
 The [`welcome-guide`](../../plugins/magpie-setup/skills/welcome-guide/SKILL.md) skill
 (`/magpie-setup:welcome-guide [<family>]`) is the user-facing way to run `show` and `enable`.
 
+The other `family` finding is `family-not-adopted`, with its rules in the section of the same name.
+It is due once when the invoking skill's family is enabled in the user-scope Claude Code settings
+(`~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json`) as `magpie-<family>@apache-magpie`,
+the project has adopted Magpie (a committed lock that is not `method: local`) without that family on its floor,
+no project settings file names the plugin, and nothing is recorded for it yet.
+`facts.plugin` names the plugin; the agent says so in one line and records `hinted`.
+The keep-or-hide question itself is asked by
+[`setup update` → Reconcile the local agent settings](../../plugins/magpie-setup/skills/setup/update.md#reconcile-the-local-agent-settings),
+which reads `candidates`:
+
+```bash
+python3 -m setup_preflight.local_families candidates --project-root <worktree>
+python3 -m setup_preflight.local_families record --project-root <worktree> --plugin <plugin> --choice keep|disable|hinted
+```
+
+`candidates` prints `ask` (no decision yet) and `apply` (hidden in another worktree, not yet in this one),
+or `"applicable": false` when the project is not adopted or a settings file cannot be read.
+Only skill families from `families.py` are candidates, so a substrate plugin
+(`magpie-agent-guard`, `magpie-vetted-ops`, `magpie-security-tools`) is never offered for hiding.
+Answers are kept under `local_families.<plugin>` in the personal layer's `reconciled.json`:
+`keep` is never asked again, `disable` lists the worktrees it was applied in, and `hinted` never replaces either.
+Nothing here writes a settings file.
+
 **`machine`** findings are about the isolated (secure agent) setup on
 this machine, reported only where it is used: `isolated-setup-changed`
 when the fingerprint of the secure-setup files differs from the one the
