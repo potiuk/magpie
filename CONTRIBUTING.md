@@ -451,6 +451,11 @@ repo root pins versions across all packages.
 | [`tools/privacy-llm/checker/`](tools/privacy-llm/checker/) | Verifies that data destined for an LLM matches the privacy-LLM policy. |
 | [`tools/privacy-llm/redactor/`](tools/privacy-llm/redactor/) | Redacts reporter PII before content reaches a non-approved LLM. |
 
+Every package supports Python 3.11 and newer, and the workspace runs on 3.11,
+its floor: the root `.python-version` pins it for `uv`, locally and in CI, so
+a change that needs a newer release fails here rather than for a user on 3.11.
+ty checks against 3.11 too (`tools/dev/shared/ty.toml`).
+
 Common invocation pattern (run from the package directory):
 
 ```bash

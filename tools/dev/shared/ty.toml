@@ -22,7 +22,7 @@
 # `tools/dev/run-workspace-check.sh` turns it into command-line flags
 # (`--error <rule>`, `--error-on-warning`), which do merge, and a member's
 # `[tool.ty]` keeps only what is its own (the paths it checks or excludes).
-# Only the three tables below are read; anything else here is an error.
+# Only the four tables below are read; anything else here is an error.
 #
 # A flag outranks a member's `[tool.ty.rules]`, so a member cannot relax a
 # rule set here. It can tighten one, or set a rule this file leaves alone.
@@ -37,6 +37,13 @@ redundant-cast = "error"
 possibly-unresolved-reference = "error"
 possibly-missing-attribute = "error"
 possibly-missing-import = "error"
+
+[environment]
+# The oldest Python every member supports (`requires-python = ">=3.11"`), so
+# an API that only exists in a later release is reported, not missed because
+# the checking interpreter happens to be newer. `.python-version` pins the
+# workspace's own interpreter to the same release.
+python-version = "3.11"
 
 [analysis]
 # Every suppression is an explicit `# ty: ignore[<rule>]`, which

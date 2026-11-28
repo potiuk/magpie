@@ -443,6 +443,9 @@ trustworthy as it grows.
   every function to be annotated) and keeps only its path-based settings,
   which ruff would resolve against the base's directory; tests are exempt
   from `ANN`.
+  The workspace runs on Python 3.11, the floor every member declares: the
+  root `.python-version` pins it for `uv`, locally and in CI, and ty checks
+  against the same release.
   ty replaces mypy, pinned exactly while it is pre-1.0.
   It runs on every member unless the member opts out with `skip = ["ty"]`,
   with ty's default rules plus the unused-ignore, redundant-cast and

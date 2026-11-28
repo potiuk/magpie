@@ -210,14 +210,20 @@ import tomllib
 
 with open(sys.argv[1], "rb") as f:
     shared = tomllib.load(f)
-unknown = set(shared) - {"rules", "analysis", "terminal"}
+unknown = set(shared) - {"rules", "environment", "analysis", "terminal"}
 if unknown:
-    sys.exit(f"error: {sys.argv[1]}: only [rules], [analysis] and [terminal] are read, not {sorted(unknown)}")
+    sys.exit(f"error: {sys.argv[1]}: only [rules], [environment], [analysis] and [terminal] are read, not {sorted(unknown)}")
 for rule, level in shared.get("rules", {}).items():
     if level not in ("error", "warn", "ignore"):
         sys.exit(f"error: {sys.argv[1]}: rule {rule!r} has level {level!r}")
     print(f"--{level}")
     print(rule)
+environment = shared.get("environment", {})
+if set(environment) - {"python-version"}:
+    sys.exit(f"error: {sys.argv[1]}: only [environment] python-version is read")
+if "python-version" in environment:
+    print("--python-version")
+    print(str(environment["python-version"]))
 for key, value in shared.get("analysis", {}).items():
     if not isinstance(value, bool):
         sys.exit(f"error: {sys.argv[1]}: [analysis] {key} must be true or false")
